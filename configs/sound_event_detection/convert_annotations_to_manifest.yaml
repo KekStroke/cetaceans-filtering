@@ -1,0 +1,18 @@
+# Convert manual SED annotations.json into flat manifest.csv
+#
+# input_json:
+#   Path to source annotation JSON.
+input_json: data/sound-event-detection/annotations.json
+#
+# output_csv:
+#   Path to output manifest CSV.
+output_csv: data/sound-event-detection/manifest.csv
+#
+# join_multilabels:
+#   If false (default), output one row per (event, label).
+#   If true, output one row per event and join multiple labels.
+join_multilabels: false
+#
+# label_separator:
+#   Separator for joining labels when join_multilabels=true.
+label_separator: ";"

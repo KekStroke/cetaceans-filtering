@@ -1,0 +1,6 @@
+defaults:
+  - data_loading: data_loading
+  - perch_embeddings: perch_v2_embed
+  - perch_training: train_perch_watkins_classifier
+  - sound_event_detection: convert_annotations_to_manifest
+  - sed_training: train_sed_classifier

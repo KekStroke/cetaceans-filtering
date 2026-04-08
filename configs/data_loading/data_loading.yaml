@@ -1,0 +1,15 @@
+# Download configuration
+raw_datasets_path: data
+raw_segment_duration: -1 # sec
+raw_sample_rate: None
+
+train_dataset_path: data/orcasound/audio_train
+val_dataset_path: data/orcasound/audio_val
+
+sample_rate: 24000
+segment_duration: 10 # sec
+segments_duration_filtering_factor: 1.2 # should be >= 1
+random_segment: True
+
+batch_size: 32
+num_workers: 16

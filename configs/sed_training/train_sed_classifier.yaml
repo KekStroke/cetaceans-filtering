@@ -1,0 +1,54 @@
+# SED binary classifier training configuration
+#
+# embeddings:
+#   Path to Perch embeddings matrix (.npy) computed on SED audio files.
+embeddings: outputs/perch/sound-event-detection/export/embeddings.npy
+#
+# embeddings_manifest:
+#   Path to Perch embedding manifest CSV (one row per window).
+#   Expected columns: filename, start_s, end_s.
+embeddings_manifest: outputs/perch/sound-event-detection/export/manifest.csv
+#
+# annotations_manifest:
+#   Path to SED annotations manifest CSV produced by convert_annotations_to_manifest.
+#   Expected columns: audio, start_s, end_s, label.
+annotations_manifest: data/sound-event-detection/manifest.csv
+#
+# output_dir:
+#   Directory for model artifacts, metrics, and report images.
+output_dir: outputs/perch/sound-event-detection/classifier
+#
+# treat_artifact_as_noise:
+#   If true, artifact-overlapping windows are kept as "noise" training examples.
+#   If false, artifact-only windows are excluded from training/evaluation entirely.
+treat_artifact_as_noise: true
+#
+# min_overlap_s:
+#   Minimum temporal overlap (seconds) between an embedding window and an
+#   annotation event to count as a match.
+min_overlap_s: 0.1
+#
+# test_size:
+#   Fraction of unique audio files reserved for the test split.
+test_size: 0.2
+#
+# val_size:
+#   Fraction of unique audio files reserved for the validation split.
+val_size: 0.1
+#
+# random_state:
+#   Random seed for reproducible file-level splitting and model training.
+random_state: 42
+#
+# max_iter:
+#   Maximum iterations for logistic regression.
+max_iter: 5000
+#
+# no_scale:
+#   If true, disable StandardScaler before logistic regression.
+no_scale: false
+#
+# generate_report_images:
+#   If true, save PNG visualizations (macro-F1 bar chart and confusion matrices)
+#   into output_dir/report_images/.
+generate_report_images: true

@@ -1,0 +1,18 @@
+[project]
+name = "cetaceans-filtering"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "datasets[audio]>=4.8.4",
+  "hydra-core>=1.3.2",
+  "matplotlib>=3.10.7",
+  "scikit-learn>=1.8.0",
+]
+
+[dependency-groups]
+perch = ["perch-hoplite[tf]"]
+
+[tool.uv.sources]
+perch-hoplite = { git = "https://github.com/google-research/perch-hoplite" }

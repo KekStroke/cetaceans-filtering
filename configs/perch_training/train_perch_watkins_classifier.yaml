@@ -1,0 +1,69 @@
+# Perch Watkins classifier training configuration
+#
+# embeddings:
+#   Path to embeddings matrix (.npy), shape [N, D].
+embeddings: outputs/perch/watkins/export/embeddings.npy
+#
+# manifest:
+#   Path to manifest CSV with one row per embedding/window.
+manifest: outputs/perch/watkins/export/manifest.csv
+#
+# output_dir:
+#   Directory where model artifacts and metrics will be written.
+#   Outputs include model.joblib, metrics.json, summary.json, and split manifests.
+output_dir: outputs/perch/watkins/classifier
+#
+# test_size:
+#   Fraction of unique files reserved for test split.
+test_size: 0.2
+#
+# val_size:
+#   Fraction of unique files reserved for validation split.
+val_size: 0.1
+#
+# random_state:
+#   Random seed used in file-level split generation.
+random_state: 42
+#
+# max_iter:
+#   Maximum iterations for logistic regression.
+max_iter: 5000
+#
+# filename_col:
+#   Optional 0-based manifest column index for filename.
+#   Set to null to auto-detect.
+filename_col: null
+#
+# start_col:
+#   Optional 0-based manifest column index for segment start time.
+#   Set to null to auto-detect.
+start_col: null
+#
+# end_col:
+#   Optional 0-based manifest column index for segment end time.
+#   Set to null to auto-detect.
+end_col: null
+#
+# label_col:
+#   Optional 0-based manifest column index for class label.
+#   If null, label is parsed from filename.
+label_col: null
+#
+# label_regex:
+#   Optional regex with one capture group for label extraction from filename.
+#   Example: "^wmms_\\d+_(.+)\\.wav$"
+label_regex: null
+#
+# no_scale:
+#   If true, disable StandardScaler before logistic regression.
+no_scale: false
+#
+# aggregation_method:
+#   File-level prediction aggregation to treat as primary in summary/report.
+#   Options: "mean" or "max"
+aggregation_method: mean
+#
+# generate_report_images:
+#   If true, save PNG visualizations (macro-F1 comparison and confusion matrices)
+#   into output_dir/report_images.
+generate_report_images: true

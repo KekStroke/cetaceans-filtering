@@ -1,0 +1,48 @@
+# Perch embedding pipeline configuration
+#
+# audio_dir:
+#   Directory that contains source audio files.
+#   Can be relative to project root or absolute.
+audio_dir: data/sound-event-detection
+#
+# file_glob:
+#   Glob pattern evaluated inside audio_dir to discover files.
+#   Examples: "*.wav", "**/*.wav"
+file_glob: "*.wav"
+#
+# dataset_name:
+#   Logical dataset name used internally by Hoplite metadata.
+dataset_name: sound-event-detection
+#
+# db_path:
+#   Directory where Hoplite DB artifacts are written.
+#   Files include: hoplite.sqlite and usearch.index.
+db_path: outputs/perch/sound-event-detection/db
+#
+# export_dir:
+#   Directory for exported arrays and metadata.
+#   Writes: embeddings.npy and manifest.csv.
+export_dir: outputs/perch/sound-event-detection/export
+#
+# model_name:
+#   Preset model key from perch_hoplite model zoo.
+#   Valid examples: perch_v2, perch_v2_gpu, perch_v2_cpu, surfperch
+model_name: perch_v2
+#
+# shard_len_s:
+#   Optional chunk length (seconds) for long files.
+#   Set to null to disable sharding (use full files/clips).
+shard_len_s: 60
+#
+# max_shards_per_file:
+#   Optional cap for number of generated shards per input file.
+#   Set to null for no cap.
+max_shards_per_file: null
+#
+# drop_existing_db:
+#   If true, removes existing Hoplite DB/index files before processing.
+drop_existing_db: true
+#
+# save_per_clip_npy:
+#   If true, also save each window embedding as an individual .npy file.
+save_per_clip_npy: false
