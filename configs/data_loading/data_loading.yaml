@@ -3,6 +3,71 @@ raw_datasets_path: data
 raw_segment_duration: -1 # sec
 raw_sample_rate: None
 
+# NOAA ONMS / SanctSound sampling
+noaa_bucket: noaa-passive-bioacoustic
+noaa_output_dir: noaa_onms
+noaa_hours_per_deployment: 1.5
+noaa_only_new_files: false
+noaa_max_files_per_deployment: null
+noaa_random_seed: 42
+noaa_assume_sample_rate_hz: 48000
+noaa_sample_bits: 16
+noaa_channels: 1
+noaa_deployment_prefixes:
+  # SanctSound SB01
+  - sanctsound/audio/sb01/sanctsound_sb01_01
+  - sanctsound/audio/sb01/sanctsound_sb01_02
+  - sanctsound/audio/sb01/sanctsound_sb01_03
+  - sanctsound/audio/sb01/sanctsound_sb01_06
+  - sanctsound/audio/sb01/sanctsound_sb01_07
+  - sanctsound/audio/sb01/sanctsound_sb01_08
+  - sanctsound/audio/sb01/sanctsound_sb01_09
+  - sanctsound/audio/sb01/sanctsound_sb01_10
+  - sanctsound/audio/sb01/sanctsound_sb01_11
+  - sanctsound/audio/sb01/sanctsound_sb01_12
+  - sanctsound/audio/sb01/sanctsound_sb01_13
+  - sanctsound/audio/sb01/sanctsound_sb01_14
+  - sanctsound/audio/sb01/sanctsound_sb01_15
+  - sanctsound/audio/sb01/sanctsound_sb01_16
+  - sanctsound/audio/sb01/sanctsound_sb01_17
+  - sanctsound/audio/sb01/sanctsound_sb01_18
+  - sanctsound/audio/sb01/sanctsound_sb01_19
+  - sanctsound/audio/sb01/sanctsound_sb01_20
+  - sanctsound/audio/sb01/sanctsound_sb01_21
+  # SanctSound SB02
+  - sanctsound/audio/sb02/sanctsound_sb02_01
+  - sanctsound/audio/sb02/sanctsound_sb02_02
+  - sanctsound/audio/sb02/sanctsound_sb02_03
+  - sanctsound/audio/sb02/sanctsound_sb02_06
+  - sanctsound/audio/sb02/sanctsound_sb02_07
+  - sanctsound/audio/sb02/sanctsound_sb02_08
+  - sanctsound/audio/sb02/sanctsound_sb02_09
+  - sanctsound/audio/sb02/sanctsound_sb02_10
+  - sanctsound/audio/sb02/sanctsound_sb02_11
+  - sanctsound/audio/sb02/sanctsound_sb02_12
+  - sanctsound/audio/sb02/sanctsound_sb02_13
+  - sanctsound/audio/sb02/sanctsound_sb02_14
+  - sanctsound/audio/sb02/sanctsound_sb02_15
+  - sanctsound/audio/sb02/sanctsound_sb02_16
+  - sanctsound/audio/sb02/sanctsound_sb02_17
+  - sanctsound/audio/sb02/sanctsound_sb02_18
+  - sanctsound/audio/sb02/sanctsound_sb02_19
+  - sanctsound/audio/sb02/sanctsound_sb02_20
+  - sanctsound/audio/sb02/sanctsound_sb02_21
+  # Other SanctSound sites (examples)
+  - sanctsound/audio/sb03/sanctsound_sb03_01
+  - sanctsound/audio/sb03/sanctsound_sb03_10
+  - sanctsound/audio/sb03/sanctsound_sb03_21
+  - sanctsound/audio/fk01/sanctsound_fk01_01
+  - sanctsound/audio/fk01/sanctsound_fk01_03
+  - sanctsound/audio/fk01/sanctsound_fk01_08
+  - sanctsound/audio/ci01/sanctsound_ci01_01
+  - sanctsound/audio/ci01/sanctsound_ci01_04
+  - sanctsound/audio/ci01/sanctsound_ci01_08
+  - sanctsound/audio/mb01/sanctsound_mb01_01
+  - sanctsound/audio/mb01/sanctsound_mb01_05
+  - sanctsound/audio/mb01/sanctsound_mb01_09
+
 train_dataset_path: data/orcasound/audio_train
 val_dataset_path: data/orcasound/audio_val
 

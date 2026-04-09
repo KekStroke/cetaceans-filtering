@@ -11,5 +11,15 @@ wheels/
 
 data/watkins/
 data/sound-event-detection/
+data/noaa_onms/
+
+# Local IDE settings
+.idea/
+
+# Local DB artifacts
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.index
 
 outputs/
