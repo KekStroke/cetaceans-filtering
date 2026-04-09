@@ -32,6 +32,7 @@ utils/
 └── datasets_downloads/
     ├── download_watkins.py         # download Watkins marine mammal dataset
     ├── download_noaa_onms.py       # sample small subsets from NOAA ONMS / SanctSound
+    ├── download_orcasound.py       # download and process Orcasound AWS Open Data
     └── download_manual_sed.py      # download manual SED dataset from Google Drive
 ```
 
@@ -122,6 +123,36 @@ Output paths:
 
 Please cite NOAA SanctSound/ONMS data according to deployment metadata
 (DOI: https://doi.org/10.25921/saca-sp25).
+
+---
+
+## Scenario 5 - Orcasound (AWS Open Data)
+
+Large run (all files from all default sources):
+
+```powershell
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_max_files_per_source=null data_loading.orcasound_target_hours_total=null
+```
+
+Small run capped to ~5 hours by actual decoded audio duration:
+
+```powershell
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_target_hours_total=5 data_loading.orcasound_assume_minutes_per_file=5 data_loading.orcasound_max_files_per_source=null
+```
+
+Optional: run only selected prefixes from the default list:
+
+```powershell
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_selected_prefixes=[2019-Orcasound-examples/,humpbacks/] data_loading.orcasound_target_hours_total=5
+```
+
+Output paths:
+
+- Download cache (original Orcasound files): `data/orcasound/downloads/...`
+- Output audio for labeling/training: `data/orcasound/audio/...`
+
+Sources are from AWS Open Data Orcasound registry:
+https://registry.opendata.aws/orcasound/
 
 ---
 

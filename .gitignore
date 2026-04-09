@@ -12,6 +12,7 @@ wheels/
 data/watkins/
 data/sound-event-detection/
 data/noaa_onms/
+data/orcasound/
 
 # Local IDE settings
 .idea/
