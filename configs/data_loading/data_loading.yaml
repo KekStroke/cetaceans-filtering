@@ -79,6 +79,7 @@ orcasound_duration_max_minutes: null
 orcasound_random_seed: 42
 orcasound_assume_sample_rate_hz: 48000
 orcasound_delete_downloaded_after_processing: false
+orcasound_delete_nonmatching_downloads: true
 orcasound_selected_prefixes: null
 # Optional override for DEFAULT_SOURCES from download_orcasound.py:
 # orcasound_sources:

@@ -149,6 +149,7 @@ def main(config: DictConfig):
 
     only_new_files = bool(dl.get("orcasound_only_new_files", False))
     delete_downloaded = bool(dl.get("orcasound_delete_downloaded_after_processing", False))
+    delete_nonmatching = bool(dl.get("orcasound_delete_nonmatching_downloads", True))
     max_files_cfg = dl.get("orcasound_max_files_per_source")
     if max_files_cfg is None or str(max_files_cfg).strip().lower() in {"none", "null", ""}:
         max_files_per_source: Optional[int] = None
@@ -221,6 +222,7 @@ def main(config: DictConfig):
         f"{max_total_files if max_total_files is not None else 'unlimited'}"
     )
     print(f"Delete downloads after processing: {delete_downloaded}")
+    print(f"Delete non-matching downloads: {delete_nonmatching}")
     print(
         f"Duration cap: "
         f"{target_hours_total:.2f} h actual audio"
@@ -301,12 +303,14 @@ def main(config: DictConfig):
             # Keep full key-relative path to avoid basename collisions.
             local_src = source_download_dir / Path(key)
             local_src.parent.mkdir(parents=True, exist_ok=True)
+            downloaded_now = False
 
             if not local_src.exists() or local_src.stat().st_size != size:
                 print(f"Downloading [{file_idx + 1}/{len(selected)}]: {src_name}")
                 try:
                     s3.download_file(bucket, key, str(local_src))
                     total_downloaded_bytes += size
+                    downloaded_now = True
                 except Exception as exc:
                     print(f"Skip file due to download error: s3://{bucket}/{key} ({exc})")
                     continue
@@ -318,18 +322,33 @@ def main(config: DictConfig):
                 duration_min_seconds is not None or duration_max_seconds is not None
             ):
                 print(f"Skip '{src_name}': failed to probe duration.")
+                if delete_nonmatching and downloaded_now:
+                    try:
+                        local_src.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 continue
             if duration_min_seconds is not None and file_duration is not None and file_duration < duration_min_seconds:
                 print(
                     f"Skip '{src_name}': {file_duration/60:.2f} min < "
                     f"min {duration_min_seconds/60:.2f} min."
                 )
+                if delete_nonmatching and downloaded_now:
+                    try:
+                        local_src.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 continue
             if duration_max_seconds is not None and file_duration is not None and file_duration > duration_max_seconds:
                 print(
                     f"Skip '{src_name}': {file_duration/60:.2f} min > "
                     f"max {duration_max_seconds/60:.2f} min."
                 )
+                if delete_nonmatching and downloaded_now:
+                    try:
+                        local_src.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 continue
 
             if target_duration_seconds is not None:
