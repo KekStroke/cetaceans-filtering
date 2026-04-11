@@ -74,6 +74,8 @@ orcasound_only_new_files: false
 orcasound_max_files_per_source: null
 orcasound_target_hours_total: null
 orcasound_assume_minutes_per_file: 5.0
+orcasound_duration_min_minutes: null
+orcasound_duration_max_minutes: null
 orcasound_random_seed: 42
 orcasound_assume_sample_rate_hz: 48000
 orcasound_delete_downloaded_after_processing: false
@@ -86,6 +88,9 @@ orcasound_selected_prefixes: null
 # orcasound_selected_prefixes:
 #   - 2019-Orcasound-examples/
 #   - humpbacks/
+# Optional duration filtering by file length:
+# orcasound_duration_min_minutes: 4.0
+# orcasound_duration_max_minutes: 6.0
 
 train_dataset_path: data/orcasound/audio_train
 val_dataset_path: data/orcasound/audio_val

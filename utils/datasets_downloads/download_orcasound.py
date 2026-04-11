@@ -162,6 +162,33 @@ def main(config: DictConfig):
     target_duration_seconds: Optional[float] = (
         None if target_hours_total is None else target_hours_total * 3600.0
     )
+    duration_min_cfg = dl.get("orcasound_duration_min_minutes")
+    duration_max_cfg = dl.get("orcasound_duration_max_minutes")
+    duration_min_minutes: Optional[float] = (
+        None
+        if duration_min_cfg is None or str(duration_min_cfg).strip().lower() in {"none", "null", ""}
+        else float(duration_min_cfg)
+    )
+    duration_max_minutes: Optional[float] = (
+        None
+        if duration_max_cfg is None or str(duration_max_cfg).strip().lower() in {"none", "null", ""}
+        else float(duration_max_cfg)
+    )
+    if (
+        duration_min_minutes is not None
+        and duration_max_minutes is not None
+        and duration_min_minutes > duration_max_minutes
+    ):
+        raise ValueError(
+            "data_loading.orcasound_duration_min_minutes must be <= "
+            "data_loading.orcasound_duration_max_minutes"
+        )
+    duration_min_seconds = (
+        None if duration_min_minutes is None else duration_min_minutes * 60.0
+    )
+    duration_max_seconds = (
+        None if duration_max_minutes is None else duration_max_minutes * 60.0
+    )
     assume_minutes_per_file = float(dl.get("orcasound_assume_minutes_per_file", 5.0))
     if assume_minutes_per_file <= 0:
         raise ValueError("data_loading.orcasound_assume_minutes_per_file must be > 0")
@@ -199,6 +226,13 @@ def main(config: DictConfig):
         f"{target_hours_total:.2f} h actual audio"
         if target_hours_total is not None
         else "Duration cap: disabled"
+    )
+    print(
+        "Preferred file duration: "
+        f"{duration_min_minutes if duration_min_minutes is not None else '-inf'}.."
+        f"{duration_max_minutes if duration_max_minutes is not None else '+inf'} min"
+        if duration_min_minutes is not None or duration_max_minutes is not None
+        else "Preferred file duration: any"
     )
     print(f"Chunking: {'disabled' if chunk_sec == -1 else f'{chunk_sec:.2f}s'}")
 
@@ -250,8 +284,16 @@ def main(config: DictConfig):
             else:
                 effective_source_cap = min(effective_source_cap, fair_share_cap)
 
+        selection_cap = effective_source_cap
+        # When filtering by duration, oversample candidates so we can skip non-matching files.
+        if (
+            selection_cap is not None
+            and (duration_min_seconds is not None or duration_max_seconds is not None)
+        ):
+            selection_cap = max(selection_cap * 8, selection_cap)
+
         rng = random.Random(seed + source_idx)
-        selected = _pick_objects(objects=objects, max_files=effective_source_cap, rng=rng)
+        selected = _pick_objects(objects=objects, max_files=selection_cap, rng=rng)
         print(f"Selected files: {len(selected)}")
 
         for file_idx, (key, size) in enumerate(selected):
@@ -271,12 +313,30 @@ def main(config: DictConfig):
             else:
                 print(f"Already downloaded: {src_name}")
 
+            file_duration = _probe_duration_seconds(local_src)
+            if file_duration is None and (
+                duration_min_seconds is not None or duration_max_seconds is not None
+            ):
+                print(f"Skip '{src_name}': failed to probe duration.")
+                continue
+            if duration_min_seconds is not None and file_duration is not None and file_duration < duration_min_seconds:
+                print(
+                    f"Skip '{src_name}': {file_duration/60:.2f} min < "
+                    f"min {duration_min_seconds/60:.2f} min."
+                )
+                continue
+            if duration_max_seconds is not None and file_duration is not None and file_duration > duration_max_seconds:
+                print(
+                    f"Skip '{src_name}': {file_duration/60:.2f} min > "
+                    f"max {duration_max_seconds/60:.2f} min."
+                )
+                continue
+
             if target_duration_seconds is not None:
                 remaining = target_duration_seconds - total_seconds[0]
                 if remaining <= 0:
                     print("Reached target total duration. Stopping.")
                     break
-                file_duration = _probe_duration_seconds(local_src)
                 # If one file is much longer than the remaining budget, skip it.
                 if (
                     file_duration is not None

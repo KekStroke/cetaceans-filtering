@@ -140,11 +140,39 @@ Small run capped to ~5 hours by actual decoded audio duration:
 uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_target_hours_total=5 data_loading.orcasound_assume_minutes_per_file=5 data_loading.orcasound_max_files_per_source=null
 ```
 
+Small run (~5 hours) using mostly ~5-minute files (4-6 min filter):
+
+```powershell
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_target_hours_total=5 data_loading.orcasound_duration_min_minutes=4 data_loading.orcasound_duration_max_minutes=6 data_loading.orcasound_assume_minutes_per_file=5 data_loading.orcasound_max_files_per_source=null
+```
+
 Optional: run only selected prefixes from the default list:
 
 ```powershell
 uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_selected_prefixes=[2019-Orcasound-examples/,humpbacks/] data_loading.orcasound_target_hours_total=5
 ```
+
+Available values for `data_loading.orcasound_selected_prefixes`:
+
+- `2017-09-27_OS_SRKW-wav/`
+- `2017-09-05-SRKW-highlight-hour/`
+- `2017-09-05-SRKW/`
+- `2017-09-27-OS-continuous-wavs/`
+- `2017_8_VesselsAndWavS/`
+- `2018-sperm-whale-Yukusam/`
+- `2019-11-14_PT_SRKW_HLS/`
+- `2019-Orcasound-examples/`
+- `2020-06-26-SRKW-Lpod/`
+- `2021_9_12_OS_YearsBestVocalPassby/`
+- `acoustic-separation/`
+- `clap-model/`
+- `data-audio-raw/`
+- `humpbacks/`
+- `labeled-data/`
+- `machineLearningFile/`
+- `orcaal-dev/`
+- `orcasounds/`
+- `wholistener/`
 
 Output paths:
 
