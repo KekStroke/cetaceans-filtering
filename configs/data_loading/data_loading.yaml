@@ -1,13 +1,15 @@
 # Download configuration
-raw_datasets_path: data
+# raw_datasets_path: data
+raw_datasets_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal
 raw_segment_duration: -1 # sec
 raw_sample_rate: None
 
 # NOAA ONMS / SanctSound sampling
 noaa_bucket: noaa-passive-bioacoustic
 noaa_output_dir: noaa_onms
-noaa_hours_per_deployment: 1.5
-noaa_only_new_files: false
+noaa_hours_per_deployment: 1000000
+noaa_only_new_files: true
+noaa_delete_downloaded_after_processing: true
 noaa_max_files_per_deployment: null
 noaa_random_seed: 42
 noaa_assume_sample_rate_hz: 48000
@@ -70,7 +72,7 @@ noaa_deployment_prefixes:
 
 # Orcasound (AWS Open Data)
 orcasound_output_dir: orcasound
-orcasound_only_new_files: false
+orcasound_only_new_files: true
 orcasound_max_files_per_source: null
 orcasound_target_hours_total: null
 orcasound_assume_minutes_per_file: 5.0
@@ -78,7 +80,7 @@ orcasound_duration_min_minutes: null
 orcasound_duration_max_minutes: null
 orcasound_random_seed: 42
 orcasound_assume_sample_rate_hz: 48000
-orcasound_delete_downloaded_after_processing: false
+orcasound_delete_downloaded_after_processing: true
 orcasound_delete_nonmatching_downloads: true
 orcasound_selected_prefixes: null
 # Optional override for DEFAULT_SOURCES from download_orcasound.py:
@@ -93,8 +95,11 @@ orcasound_selected_prefixes: null
 # orcasound_duration_min_minutes: 4.0
 # orcasound_duration_max_minutes: 6.0
 
-train_dataset_path: data/orcasound/audio_train
-val_dataset_path: data/orcasound/audio_val
+# train_dataset_path: data/orcasound/audio_train
+# val_dataset_path: data/orcasound/audio_val
+
+train_dataset_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal/orcasound/audio_train
+val_dataset_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal/orcasound/audio_val
 
 sample_rate: 24000
 segment_duration: 10 # sec
