@@ -101,6 +101,12 @@ orcasound_selected_prefixes: null
 # orcasound_duration_min_minutes: 4.0
 # orcasound_duration_max_minutes: 6.0
 
+# Pacific Sound
+pacific_sound_output_dir: pacific_sound
+pacific_sound_tier: 256khz # 256khz, 16khz, 2khz
+pacific_sound_years: [2016, 2017, 2023] # starting from 2015
+pacific_sound_months: ["11", "12"] # null means all months
+
 # train_dataset_path: data/orcasound/audio_train
 # val_dataset_path: data/orcasound/audio_val
 
