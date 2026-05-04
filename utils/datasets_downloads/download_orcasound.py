@@ -1,7 +1,8 @@
+import json
 import random
 from math import ceil
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import boto3
 import hydra
@@ -21,7 +22,6 @@ DEFAULT_SOURCES: List[Source] = [
     ("acoustic-sandbox", "2017-09-05-SRKW-highlight-hour/"),
     ("acoustic-sandbox", "2017-09-05-SRKW/"),
     ("acoustic-sandbox", "2017-09-27-OS-continuous-wavs/"),
-    ("acoustic-sandbox", "2017-09-27_OS_SRKW-wav/"),
     ("acoustic-sandbox", "2017_8_VesselsAndWavS/"),
     ("acoustic-sandbox", "2018-sperm-whale-Yukusam/"),
     ("acoustic-sandbox", "2019-11-14_PT_SRKW_HLS/"),
@@ -62,6 +62,28 @@ def _unique_sources(sources: Iterable[Source]) -> List[Source]:
     return unique
 
 
+def _source_folder_name(bucket: str, prefix: str) -> str:
+    return sanitize_stem(f"{bucket}_{prefix.rstrip('/').replace('/', '_')}")
+
+
+def _object_stem(bucket: str, key: str) -> str:
+    key_stem = Path(key).with_suffix("").as_posix().replace("/", "_")
+    return sanitize_stem(f"{bucket}_{key_stem}")
+
+
+def _processed_audio_outputs(processed_dir: Path, stem: str) -> List[Path]:
+    direct = processed_dir / f"{stem}.wav"
+    outputs: List[Path] = []
+    if direct.exists():
+        outputs.append(direct)
+    outputs.extend(sorted(processed_dir.glob(f"{stem}_[0-9][0-9][0-9][0-9][0-9].wav")))
+    return sorted(set(outputs))
+
+
+def _processed_audio_exists(processed_dir: Path, stem: str) -> bool:
+    return bool(_processed_audio_outputs(processed_dir, stem))
+
+
 def _list_s3_audio_objects(s3, bucket: str, prefix: str) -> List[AudioObject]:
     objects: List[AudioObject] = []
     paginator = s3.get_paginator("list_objects_v2")
@@ -96,7 +118,9 @@ def _filter_sources_by_prefixes(sources: List[Source], dl: DictConfig) -> List[S
     if not selected_prefixes_cfg:
         return sources
 
-    selected = {_normalize_prefix(str(p)) for p in selected_prefixes_cfg if str(p).strip()}
+    selected = {
+        _normalize_prefix(str(p)) for p in selected_prefixes_cfg if str(p).strip()
+    }
     if not selected:
         return sources
 
@@ -129,34 +153,79 @@ def _probe_duration_seconds(path: Path) -> Optional[float]:
         return None
 
 
+def _write_manifest(audio_dir: Path, manifest_path: Path) -> int:
+    entries: List[Dict[str, float | int | str]] = []
+    for audio_path in sorted(audio_dir.glob("*.wav")):
+        try:
+            info = sf.info(str(audio_path))
+        except Exception as exc:
+            print(f"Warning: failed to inspect '{audio_path.name}' for manifest: {exc}")
+            continue
+
+        duration = float(getattr(info, "duration", 0.0) or 0.0)
+        sample_rate = int(getattr(info, "samplerate", 0) or 0)
+        if duration <= 0 or sample_rate <= 0:
+            print(
+                f"Warning: skip manifest entry with invalid metadata: {audio_path.name}"
+            )
+            continue
+
+        entries.append(
+            {
+                "audio_filepath": audio_path.relative_to(
+                    manifest_path.parent
+                ).as_posix(),
+                "duration": duration,
+                "sample_rate": sample_rate,
+            }
+        )
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_path.open("w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    return len(entries)
+
+
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(config: DictConfig):
     dl = config["data_loading"]
 
     out_root = Path(dl["raw_datasets_path"])
     dataset_root = out_root / str(dl.get("orcasound_output_dir", "orcasound"))
-    downloads_dir = dataset_root / "downloads"
-    processed_dir = dataset_root / "audio"
-    downloads_dir.mkdir(parents=True, exist_ok=True)
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    dataset_root.mkdir(parents=True, exist_ok=True)
 
     sr_target_cfg = dl.get("raw_sample_rate")
-    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {"none", "null", ""}:
+    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
         sr_target = int(dl.get("orcasound_assume_sample_rate_hz", 48000))
     else:
         sr_target = int(sr_target_cfg)
     chunk_sec = float(dl["raw_segment_duration"])
 
     only_new_files = bool(dl.get("orcasound_only_new_files", False))
-    delete_downloaded = bool(dl.get("orcasound_delete_downloaded_after_processing", False))
+    delete_downloaded = bool(
+        dl.get("orcasound_delete_downloaded_after_processing", False)
+    )
     delete_nonmatching = bool(dl.get("orcasound_delete_nonmatching_downloads", True))
     max_files_cfg = dl.get("orcasound_max_files_per_source")
-    if max_files_cfg is None or str(max_files_cfg).strip().lower() in {"none", "null", ""}:
+    if max_files_cfg is None or str(max_files_cfg).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
         max_files_per_source: Optional[int] = None
     else:
         max_files_per_source = int(max_files_cfg)
     target_hours_cfg = dl.get("orcasound_target_hours_total")
-    if target_hours_cfg is None or str(target_hours_cfg).strip().lower() in {"none", "null", ""}:
+    if target_hours_cfg is None or str(target_hours_cfg).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
         target_hours_total: Optional[float] = None
     else:
         target_hours_total = float(target_hours_cfg)
@@ -167,12 +236,14 @@ def main(config: DictConfig):
     duration_max_cfg = dl.get("orcasound_duration_max_minutes")
     duration_min_minutes: Optional[float] = (
         None
-        if duration_min_cfg is None or str(duration_min_cfg).strip().lower() in {"none", "null", ""}
+        if duration_min_cfg is None
+        or str(duration_min_cfg).strip().lower() in {"none", "null", ""}
         else float(duration_min_cfg)
     )
     duration_max_minutes: Optional[float] = (
         None
-        if duration_max_cfg is None or str(duration_max_cfg).strip().lower() in {"none", "null", ""}
+        if duration_max_cfg is None
+        or str(duration_max_cfg).strip().lower() in {"none", "null", ""}
         else float(duration_max_cfg)
     )
     if (
@@ -224,8 +295,7 @@ def main(config: DictConfig):
     print(f"Delete downloads after processing: {delete_downloaded}")
     print(f"Delete non-matching downloads: {delete_nonmatching}")
     print(
-        f"Duration cap: "
-        f"{target_hours_total:.2f} h actual audio"
+        f"Duration cap: {target_hours_total:.2f} h actual audio"
         if target_hours_total is not None
         else "Duration cap: disabled"
     )
@@ -239,16 +309,23 @@ def main(config: DictConfig):
     print(f"Chunking: {'disabled' if chunk_sec == -1 else f'{chunk_sec:.2f}s'}")
 
     for source_idx, (bucket, prefix) in enumerate(sources):
-        if target_duration_seconds is not None and total_seconds[0] >= target_duration_seconds:
+        if (
+            target_duration_seconds is not None
+            and total_seconds[0] >= target_duration_seconds
+        ):
             print("\nReached target total duration. Stopping.")
             break
         if max_total_files is not None and processed_files >= max_total_files:
             print("\nReached global file cap. Stopping.")
             break
 
-        source_name = sanitize_stem(f"{bucket}_{prefix.rstrip('/').replace('/', '_')}")
-        source_download_dir = downloads_dir / source_name
+        source_name = _source_folder_name(bucket=bucket, prefix=prefix)
+        source_dir = dataset_root / source_name
+        source_download_dir = source_dir / "downloads"
+        source_audio_dir = source_dir / "audio"
+        manifest_path = source_dir / "manifest.jsonl"
         source_download_dir.mkdir(parents=True, exist_ok=True)
+        source_audio_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n=== {bucket}/{prefix} ===")
         try:
@@ -264,13 +341,21 @@ def main(config: DictConfig):
         if only_new_files:
             pending: List[AudioObject] = []
             for key, size in objects:
-                local_src = source_download_dir / Path(key)
-                if local_src.exists() and local_src.stat().st_size == size:
+                stem = _object_stem(bucket=bucket, key=key)
+                already_processed = _processed_audio_exists(source_audio_dir, stem)
+                if already_processed:
                     continue
                 pending.append((key, size))
             objects = pending
             if not objects:
                 print("No new files for this source.")
+                manifest_entries = _write_manifest(
+                    audio_dir=source_audio_dir,
+                    manifest_path=manifest_path,
+                )
+                print(
+                    f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})"
+                )
                 continue
 
         effective_source_cap = max_files_per_source
@@ -288,9 +373,8 @@ def main(config: DictConfig):
 
         selection_cap = effective_source_cap
         # When filtering by duration, oversample candidates so we can skip non-matching files.
-        if (
-            selection_cap is not None
-            and (duration_min_seconds is not None or duration_max_seconds is not None)
+        if selection_cap is not None and (
+            duration_min_seconds is not None or duration_max_seconds is not None
         ):
             selection_cap = max(selection_cap * 8, selection_cap)
 
@@ -298,7 +382,20 @@ def main(config: DictConfig):
         selected = _pick_objects(objects=objects, max_files=selection_cap, rng=rng)
         print(f"Selected files: {len(selected)}")
 
+        stop_all_sources = False
+        accepted_source_files = 0
         for file_idx, (key, size) in enumerate(selected):
+            if max_total_files is not None and processed_files >= max_total_files:
+                print("Reached global file cap. Stopping.")
+                stop_all_sources = True
+                break
+            if (
+                effective_source_cap is not None
+                and accepted_source_files >= effective_source_cap
+            ):
+                print("Reached source file cap.")
+                break
+
             src_name = Path(key).name
             # Keep full key-relative path to avoid basename collisions.
             local_src = source_download_dir / Path(key)
@@ -312,7 +409,9 @@ def main(config: DictConfig):
                     total_downloaded_bytes += size
                     downloaded_now = True
                 except Exception as exc:
-                    print(f"Skip file due to download error: s3://{bucket}/{key} ({exc})")
+                    print(
+                        f"Skip file due to download error: s3://{bucket}/{key} ({exc})"
+                    )
                     continue
             else:
                 print(f"Already downloaded: {src_name}")
@@ -328,10 +427,14 @@ def main(config: DictConfig):
                     except Exception:
                         pass
                 continue
-            if duration_min_seconds is not None and file_duration is not None and file_duration < duration_min_seconds:
+            if (
+                duration_min_seconds is not None
+                and file_duration is not None
+                and file_duration < duration_min_seconds
+            ):
                 print(
-                    f"Skip '{src_name}': {file_duration/60:.2f} min < "
-                    f"min {duration_min_seconds/60:.2f} min."
+                    f"Skip '{src_name}': {file_duration / 60:.2f} min < "
+                    f"min {duration_min_seconds / 60:.2f} min."
                 )
                 if delete_nonmatching and downloaded_now:
                     try:
@@ -339,10 +442,14 @@ def main(config: DictConfig):
                     except Exception:
                         pass
                 continue
-            if duration_max_seconds is not None and file_duration is not None and file_duration > duration_max_seconds:
+            if (
+                duration_max_seconds is not None
+                and file_duration is not None
+                and file_duration > duration_max_seconds
+            ):
                 print(
-                    f"Skip '{src_name}': {file_duration/60:.2f} min > "
-                    f"max {duration_max_seconds/60:.2f} min."
+                    f"Skip '{src_name}': {file_duration / 60:.2f} min > "
+                    f"max {duration_max_seconds / 60:.2f} min."
                 )
                 if delete_nonmatching and downloaded_now:
                     try:
@@ -355,6 +462,7 @@ def main(config: DictConfig):
                 remaining = target_duration_seconds - total_seconds[0]
                 if remaining <= 0:
                     print("Reached target total duration. Stopping.")
+                    stop_all_sources = True
                     break
                 # If one file is much longer than the remaining budget, skip it.
                 if (
@@ -364,24 +472,24 @@ def main(config: DictConfig):
                     and processed_files > 0
                 ):
                     print(
-                        f"Skip '{src_name}' (duration {file_duration/60:.1f} min) "
-                        f"to keep target budget (~{remaining/60:.1f} min left)."
+                        f"Skip '{src_name}' (duration {file_duration / 60:.1f} min) "
+                        f"to keep target budget (~{remaining / 60:.1f} min left)."
                     )
                     continue
 
-            key_stem = Path(key).with_suffix("").as_posix().replace("/", "_")
-            stem = sanitize_stem(f"{bucket}_{key_stem}")
+            stem = _object_stem(bucket=bucket, key=key)
             try:
                 before_seconds = total_seconds[0]
                 process_large_audio(
                     src_path=local_src,
-                    out_dir=processed_dir,
+                    out_dir=source_audio_dir,
                     stem_base=stem,
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
                 )
                 processed_files += 1
+                accepted_source_files += 1
             except Exception as exc:
                 print(f"Error processing '{src_name}': {exc}")
                 continue
@@ -391,8 +499,9 @@ def main(config: DictConfig):
                 if added > 0 and total_seconds[0] >= target_duration_seconds:
                     print(
                         f"Reached target total duration after '{src_name}' "
-                        f"(added {added/60:.1f} min)."
+                        f"(added {added / 60:.1f} min)."
                     )
+                    stop_all_sources = True
                     break
 
             if delete_downloaded:
@@ -400,16 +509,21 @@ def main(config: DictConfig):
                     local_src.unlink(missing_ok=True)
                 except Exception:
                     pass
-        else:
-            continue
-        break
+
+        manifest_entries = _write_manifest(
+            audio_dir=source_audio_dir,
+            manifest_path=manifest_path,
+        )
+        print(f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})")
+
+        if stop_all_sources:
+            break
 
     print("\nFinished Orcasound download + processing")
     print(f"Processed source files: {processed_files}")
     print(f"Total duration (output WAVs): {total_seconds[0] / 3600:.2f} h")
     print(f"Downloaded data: {total_downloaded_bytes / (1024**3):.2f} GB")
-    print(f"Download cache dir: {downloads_dir.resolve()}")
-    print(f"Audio dir: {processed_dir.resolve()}")
+    print(f"Dataset dir: {dataset_root.resolve()}")
 
 
 if __name__ == "__main__":
