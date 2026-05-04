@@ -16,6 +16,12 @@ noaa_assume_sample_rate_hz: 48000
 noaa_sample_bits: 16
 noaa_channels: 1
 noaa_deployment_prefixes:
+  # Most useful for SSL
+  # - dclde/
+  # - pifsc/
+  # - nefsc/
+  # - afsc/
+  # - sanctsound/
   # SanctSound SB01
   - sanctsound/audio/sb01/sanctsound_sb01_01
   - sanctsound/audio/sb01/sanctsound_sb01_02

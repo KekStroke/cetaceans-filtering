@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import hydra
+import soundfile as sf
 from audio_saver import process_large_audio, sanitize_stem
 from omegaconf import DictConfig
 
@@ -95,8 +96,47 @@ def _is_audio_object(name: str) -> bool:
     return ext in {".wav", ".flac", ".aif", ".aiff", ".mp3"}
 
 
+def _source_name_from_prefix(prefix: str) -> str:
+    first_part = _normalize_prefix(prefix).split("/", 1)[0]
+    return sanitize_stem(first_part or "unknown")
+
+
 def _processed_audio_exists(processed_dir: Path, stem: str) -> bool:
     return any(processed_dir.glob(f"{stem}*.wav"))
+
+
+def _write_manifest(audio_dir: Path, manifest_path: Path) -> int:
+    entries: List[Dict[str, float | int | str]] = []
+    for audio_path in sorted(audio_dir.glob("*.wav")):
+        try:
+            info = sf.info(str(audio_path))
+        except Exception as exc:
+            print(f"Warning: failed to inspect '{audio_path.name}' for manifest: {exc}")
+            continue
+
+        duration = float(getattr(info, "duration", 0.0) or 0.0)
+        sample_rate = int(getattr(info, "samplerate", 0) or 0)
+        if duration <= 0 or sample_rate <= 0:
+            print(
+                f"Warning: skip manifest entry with invalid metadata: {audio_path.name}"
+            )
+            continue
+
+        entries.append(
+            {
+                "audio_filepath": audio_path.relative_to(
+                    manifest_path.parent
+                ).as_posix(),
+                "duration": duration,
+                "sample_rate": sample_rate,
+            }
+        )
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_path.open("w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry, ensure_ascii=True) + "\n")
+    return len(entries)
 
 
 def _estimate_duration_seconds(
@@ -199,13 +239,14 @@ def main(config: DictConfig):
 
     out_root = Path(dl["raw_datasets_path"])
     out_dir = out_root / str(dl.get("noaa_output_dir", "noaa_onms"))
-    downloads_dir = out_dir / "downloads"
-    processed_dir = out_dir / "audio"
-    downloads_dir.mkdir(parents=True, exist_ok=True)
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     sr_target_cfg = dl.get("raw_sample_rate")
-    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {"none", "null", ""}:
+    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
         sr_target = int(dl.get("noaa_assume_sample_rate_hz", 48000))
     else:
         sr_target = int(sr_target_cfg)
@@ -248,11 +289,18 @@ def main(config: DictConfig):
         if not prefix.endswith("/"):
             prefix = prefix + "/"
 
-        dep_name = sanitize_stem(Path(prefix.rstrip("/")).name)
-        dep_download_dir = downloads_dir / dep_name
-        dep_download_dir.mkdir(parents=True, exist_ok=True)
+        source_name = _source_name_from_prefix(prefix)
+        source_dir = out_dir / source_name
+        source_audio_dir = source_dir / "audio"
+        source_downloads_dir = source_dir / "downloads"
+        manifest_path = source_dir / "manifest.jsonl"
 
-        print(f"\n=== {dep_name} ===")
+        dep_name = sanitize_stem(Path(prefix.rstrip("/")).name)
+        dep_download_dir = source_downloads_dir / dep_name
+        dep_download_dir.mkdir(parents=True, exist_ok=True)
+        source_audio_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n=== {source_name}/{dep_name} ===")
         print(f"Listing objects under: {prefix}")
         objects = _list_objects(bucket=bucket, prefix=prefix)
         audio_files = [o for o in objects if _is_audio_object(str(o.get("name", "")))]
@@ -270,8 +318,10 @@ def main(config: DictConfig):
                 local_src = dep_download_dir / src_name
                 stem = sanitize_stem(f"{dep_name}_{Path(src_name).stem}")
 
-                already_downloaded = local_src.exists() and local_src.stat().st_size == size
-                already_processed = _processed_audio_exists(processed_dir, stem)
+                already_downloaded = (
+                    local_src.exists() and local_src.stat().st_size == size
+                )
+                already_processed = _processed_audio_exists(source_audio_dir, stem)
 
                 if already_downloaded or already_processed:
                     continue
@@ -281,6 +331,13 @@ def main(config: DictConfig):
             audio_files = new_only
             if not audio_files:
                 print("No new files left for this deployment, skipping.")
+                manifest_entries = _write_manifest(
+                    audio_dir=source_audio_dir,
+                    manifest_path=manifest_path,
+                )
+                print(
+                    f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})"
+                )
                 continue
 
         rng = random.Random(seed + dep_idx)
@@ -302,7 +359,7 @@ def main(config: DictConfig):
             local_src = dep_download_dir / src_name
             stem = sanitize_stem(f"{dep_name}_{Path(src_name).stem}")
 
-            if only_new_files and _processed_audio_exists(processed_dir, stem):
+            if only_new_files and _processed_audio_exists(source_audio_dir, stem):
                 print(f"Already processed: {src_name}")
                 continue
 
@@ -325,7 +382,7 @@ def main(config: DictConfig):
             try:
                 process_large_audio(
                     src_path=local_src,
-                    out_dir=processed_dir,
+                    out_dir=source_audio_dir,
                     stem_base=stem,
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
@@ -339,13 +396,20 @@ def main(config: DictConfig):
                 try:
                     local_src.unlink(missing_ok=True)
                 except Exception as exc:
-                    print(f"Warning: failed to delete downloaded file '{src_name}': {exc}")
+                    print(
+                        f"Warning: failed to delete downloaded file '{src_name}': {exc}"
+                    )
+
+        manifest_entries = _write_manifest(
+            audio_dir=source_audio_dir,
+            manifest_path=manifest_path,
+        )
+        print(f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})")
 
     print("\nFinished NOAA ONMS sampling")
     print(f"Total duration (output WAVs): {total_seconds[0] / 3600:.2f} h")
     print(f"Downloaded data: {total_downloaded_bytes / (1024**3):.2f} GB")
-    print(f"Download cache dir: {downloads_dir.resolve()}")
-    print(f"Audio dir: {processed_dir.resolve()}")
+    print(f"Dataset dir: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":
