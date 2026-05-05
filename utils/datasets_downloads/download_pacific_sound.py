@@ -1,14 +1,13 @@
-import json
 import shutil
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import boto3
 import hydra
-import soundfile as sf
 from audio_saver import process_large_audio, sanitize_stem
 from botocore import UNSIGNED
 from botocore.client import Config
+from manifest_utils import write_manifest
 from omegaconf import DictConfig
 from tqdm import tqdm
 
@@ -93,40 +92,6 @@ def _config_list(value, default: Optional[Sequence] = None) -> Optional[List]:
     return list(value)
 
 
-def _write_manifest(audio_dir: Path, manifest_path: Path) -> int:
-    entries: List[dict[str, float | int | str]] = []
-    for audio_path in sorted(audio_dir.glob("*.wav")):
-        try:
-            info = sf.info(str(audio_path))
-        except Exception as exc:
-            print(f"Warning: failed to inspect '{audio_path.name}' for manifest: {exc}")
-            continue
-
-        duration = float(getattr(info, "duration", 0.0) or 0.0)
-        sample_rate = int(getattr(info, "samplerate", 0) or 0)
-        if duration <= 0 or sample_rate <= 0:
-            print(
-                f"Warning: skip manifest entry with invalid metadata: {audio_path.name}"
-            )
-            continue
-
-        entries.append(
-            {
-                "audio_filepath": audio_path.relative_to(
-                    manifest_path.parent
-                ).as_posix(),
-                "duration": duration,
-                "sample_rate": sample_rate,
-            }
-        )
-
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    with manifest_path.open("w", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(json.dumps(entry, ensure_ascii=True) + "\n")
-    return len(entries)
-
-
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(cfg: DictConfig):
     dl = cfg["data_loading"]
@@ -204,7 +169,7 @@ def main(cfg: DictConfig):
         except Exception:
             pass
 
-    manifest_entries = _write_manifest(audio_dir=audio_dir, manifest_path=manifest_path)
+    manifest_entries = write_manifest(audio_dir=audio_dir, manifest_path=manifest_path)
     print(f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})")
 
     print("\nFinished")

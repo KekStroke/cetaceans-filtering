@@ -5,6 +5,7 @@ import hydra
 import soundfile as sf
 from audio_saver import process_array_audio, process_large_audio, sanitize_stem
 from datasets import Audio, concatenate_datasets, load_dataset
+from manifest_utils import write_manifest
 from omegaconf import DictConfig
 from tqdm import tqdm
 
@@ -14,6 +15,7 @@ def main(config: DictConfig):
     dl = config["data_loading"]
     out_root = Path(dl["raw_datasets_path"])
     out_dir = out_root / "watkins"
+    manifest_path = out_dir / "manifest.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     hf_name = "confit/wmms-parquet"
@@ -80,6 +82,9 @@ def main(config: DictConfig):
         if processed % progress_every == 0:
             pbar.set_postfix_str(f"total {total_seconds[0] / 3600:.2f} h")
     pbar.close()
+
+    manifest_entries = write_manifest(audio_dir=out_dir, manifest_path=manifest_path)
+    print(f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})")
 
     print("\nFinished")
     print(f"Processed source clips: {processed}")

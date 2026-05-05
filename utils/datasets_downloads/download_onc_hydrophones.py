@@ -38,15 +38,14 @@ Example (in configs/data_loading/data_loading.yaml, under the nested ``sources``
 
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Set
 
 import hydra
-import soundfile as sf
 from audio_saver import process_large_audio, sanitize_stem
+from manifest_utils import append_manifest_records
 from omegaconf import DictConfig, OmegaConf
 from onc import ONC
 from tqdm import tqdm
@@ -137,28 +136,6 @@ def _wav_paths_snapshot(dir_path: Path) -> Set[Path]:
     if not dir_path.is_dir():
         return set()
     return set(dir_path.glob("*.wav"))
-
-
-def _append_manifest_records(
-    manifest_path: Path,
-    *,
-    archive_name: str,
-    new_wavs: List[Path],
-    record: Mapping[str, Any],
-) -> None:
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with manifest_path.open("a", encoding="utf-8") as f:
-        for wav in sorted(new_wavs, key=lambda p: str(p)):
-            info = sf.info(wav)
-            row = {
-                **record,
-                "archive_file": archive_name,
-                "audio_filepath": wav.resolve().as_posix(),
-                "duration_sec": float(info.frames) / float(info.samplerate),
-                "sample_rate_hz": int(info.samplerate),
-            }
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
@@ -278,11 +255,13 @@ def main(cfg: DictConfig) -> None:
                 after = _wav_paths_snapshot(audio_dir)
                 new_wavs = sorted(after - before, key=lambda p: str(p))
                 if new_wavs:
-                    _append_manifest_records(
-                        manifest_path,
-                        archive_name=fname,
-                        new_wavs=new_wavs,
-                        record=base_record,
+                    append_manifest_records(
+                        manifest_path=manifest_path,
+                        audio_paths=new_wavs,
+                        extra_fields={
+                            **base_record,
+                            "archive_file": fname,
+                        },
                     )
                 processed += 1
             except Exception as e:
