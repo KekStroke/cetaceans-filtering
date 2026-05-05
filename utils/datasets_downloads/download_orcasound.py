@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import boto3
 import hydra
 import soundfile as sf
-from audio_saver import process_large_audio, sanitize_stem
+from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from botocore import UNSIGNED
 from botocore.client import Config
 from manifest_utils import write_manifest
@@ -174,6 +174,10 @@ def main(config: DictConfig):
     else:
         sr_target = int(sr_target_cfg)
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
 
     only_new_files = bool(orcasound_cfg.get("only_new_files", False))
     delete_downloaded = bool(
@@ -461,6 +465,7 @@ def main(config: DictConfig):
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
                 processed_files += 1
                 accepted_source_files += 1

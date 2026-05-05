@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Set
 
 import hydra
-from audio_saver import process_large_audio, sanitize_stem
+from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from manifest_utils import append_manifest_records
 from omegaconf import DictConfig, OmegaConf
 from onc import ONC
@@ -166,6 +166,10 @@ def main(cfg: DictConfig) -> None:
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
 
     targets = onc_cfg.get("targets") or []
     if not targets:
@@ -251,6 +255,7 @@ def main(cfg: DictConfig) -> None:
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
                 after = _wav_paths_snapshot(audio_dir)
                 new_wavs = sorted(after - before, key=lambda p: str(p))

@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import librosa
 import numpy as np
@@ -25,6 +25,31 @@ def write_wav(out_path: Path, data: np.ndarray, sr: int) -> None:
     sf.write(out_path, data, sr)
 
 
+def resolve_min_sample_rate(
+    raw_sample_rate: Any,
+    raw_skip_below_sample_rate: bool,
+) -> Optional[int]:
+    if not raw_skip_below_sample_rate:
+        return None
+    if raw_sample_rate is None or str(raw_sample_rate).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
+        raise ValueError(
+            "data_loading.raw_sample_rate must be set when "
+            "data_loading.raw_skip_below_sample_rate=true"
+        )
+    return int(raw_sample_rate)
+
+
+def _should_skip_sample_rate(sr: int, min_sample_rate: Optional[int], label: str) -> bool:
+    if min_sample_rate is None or sr >= min_sample_rate:
+        return False
+    print(f"Skip '{label}': sample rate {sr} Hz < minimum {min_sample_rate} Hz")
+    return True
+
+
 def process_array_audio(
     data: np.ndarray,
     sr: int,
@@ -33,6 +58,7 @@ def process_array_audio(
     total_seconds_ref: Optional[List[float]],
     sr_target: int,
     chunk_sec: float,
+    min_sample_rate: Optional[int] = None,
 ) -> None:
     """
     Обработка уже загруженного массива:
@@ -40,6 +66,9 @@ def process_array_audio(
       - ресемпл при необходимости
       - запись цельного файла или нарезка по chunk_sec
     """
+    if _should_skip_sample_rate(int(sr), min_sample_rate, stem_base):
+        return
+
     data = to_mono(data).astype("float32", copy=False)
     # if sr != sr_target:
     #     data = librosa.resample(data, orig_sr=sr, target_sr=sr_target)
@@ -74,6 +103,7 @@ def process_large_audio(
     sr_target: int,
     chunk_sec: float,
     stream_block_sec: float = 30.0,
+    min_sample_rate: Optional[int] = None,
 ) -> None:
     """
     Памяти-бережливая обработка файла на диске:
@@ -85,6 +115,8 @@ def process_large_audio(
     with sf.SoundFile(str(src_path), mode="r") as f:
         orig_sr = f.samplerate
         n_frames = f.frames
+        if _should_skip_sample_rate(int(orig_sr), min_sample_rate, src_path.name):
+            return
 
         # Если файл короче chunk_sec — сохраняем единый WAV (в RAM, разово).
         if chunk_sec == -1 or n_frames / orig_sr <= chunk_sec:

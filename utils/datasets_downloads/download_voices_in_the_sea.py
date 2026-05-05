@@ -7,7 +7,12 @@ import hydra
 import librosa
 import requests
 import soundfile as sf
-from audio_saver import process_array_audio, process_large_audio, sanitize_stem
+from audio_saver import (
+    process_array_audio,
+    process_large_audio,
+    resolve_min_sample_rate,
+    sanitize_stem,
+)
 from bs4 import BeautifulSoup
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
@@ -120,6 +125,10 @@ def main(cfg: DictConfig):
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
 
     tmp_dir = out_root / "_tmp" / str(
         voices_cfg.get("tmp_dir_name", "voices_in_the_sea")
@@ -161,6 +170,7 @@ def main(cfg: DictConfig):
                         total_seconds_ref=total_seconds,
                         sr_target=sr_target,
                         chunk_sec=chunk_sec,
+                        min_sample_rate=min_sample_rate,
                     )
                 else:
                     # MP3/OGG: decode to array (libsndfile often handles OGG; MP3 -> librosa)
@@ -178,6 +188,7 @@ def main(cfg: DictConfig):
                         total_seconds_ref=total_seconds,
                         sr_target=sr_target,
                         chunk_sec=chunk_sec,
+                        min_sample_rate=min_sample_rate,
                     )
 
                 processed += 1

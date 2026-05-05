@@ -3,7 +3,12 @@ from pathlib import Path
 
 import hydra
 import soundfile as sf
-from audio_saver import process_array_audio, process_large_audio, sanitize_stem
+from audio_saver import (
+    process_array_audio,
+    process_large_audio,
+    resolve_min_sample_rate,
+    sanitize_stem,
+)
 from datasets import Audio, concatenate_datasets, load_dataset
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
@@ -23,6 +28,10 @@ def main(config: DictConfig):
     splits = list(watkins_cfg.get("splits", ["train", "test"]))
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
     progress_every = int(watkins_cfg.get("progress_every", 50))
 
     total_seconds = [0.0]
@@ -57,6 +66,7 @@ def main(config: DictConfig):
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
 
             # 2) Fallback: only use path if it actually exists on disk
@@ -68,6 +78,7 @@ def main(config: DictConfig):
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
             else:
                 # Nothing usable for this row

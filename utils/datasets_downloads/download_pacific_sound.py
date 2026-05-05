@@ -4,7 +4,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import boto3
 import hydra
-from audio_saver import process_large_audio, sanitize_stem
+from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from botocore import UNSIGNED
 from botocore.client import Config
 from manifest_utils import write_manifest
@@ -119,6 +119,10 @@ def main(cfg: DictConfig):
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
 
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
 
@@ -159,6 +163,7 @@ def main(cfg: DictConfig):
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
             except Exception as e:
                 print(f"error processing {bucket}/{key}: {e}")

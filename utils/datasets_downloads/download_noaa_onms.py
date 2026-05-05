@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import hydra
-from audio_saver import process_large_audio, sanitize_stem
+from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
 
@@ -222,6 +222,10 @@ def main(config: DictConfig):
         sr_target = int(sr_target_cfg)
 
     chunk_sec = float(dl["raw_segment_duration"])
+    min_sample_rate = resolve_min_sample_rate(
+        raw_sample_rate=dl.get("raw_sample_rate"),
+        raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
+    )
     target_hours = float(noaa_cfg.get("hours_per_deployment", 1.5))
     target_seconds = target_hours * 3600.0
     only_new_files = bool(noaa_cfg.get("only_new_files", False))
@@ -361,6 +365,7 @@ def main(config: DictConfig):
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
                 )
             except Exception as exc:
                 print(f"Error processing '{src_name}': {exc}")
