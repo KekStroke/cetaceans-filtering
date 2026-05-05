@@ -134,7 +134,10 @@ def _download_file(
             if dst_path.exists():
                 dst_path.unlink()
 
-            with urllib.request.urlopen(url, timeout=120) as resp, tmp_path.open("wb") as f:
+            with (
+                urllib.request.urlopen(url, timeout=120) as resp,
+                tmp_path.open("wb") as f,
+            ):
                 while True:
                     chunk = resp.read(1024 * 1024)
                     if not chunk:
@@ -194,17 +197,18 @@ def _pick_random_files(
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(config: DictConfig):
     dl = config["data_loading"]
+    noaa_cfg = dl["sources"]["noaa"]
 
-    bucket = str(dl.get("noaa_bucket", "noaa-passive-bioacoustic"))
-    prefixes = list(dl.get("noaa_deployment_prefixes", []))
+    bucket = str(noaa_cfg.get("bucket", "noaa-passive-bioacoustic"))
+    prefixes = list(noaa_cfg.get("deployment_prefixes", []))
     if not prefixes:
         raise ValueError(
-            "data_loading.noaa_deployment_prefixes is empty. "
+            "data_loading.sources.noaa.deployment_prefixes is empty. "
             "Add at least one deployment prefix."
         )
 
     out_root = Path(dl["raw_datasets_path"])
-    out_dir = out_root / str(dl.get("noaa_output_dir", "noaa_onms"))
+    out_dir = out_root / str(noaa_cfg.get("output_dir_name", "noaa_onms"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sr_target_cfg = dl.get("raw_sample_rate")
@@ -213,26 +217,30 @@ def main(config: DictConfig):
         "null",
         "",
     }:
-        sr_target = int(dl.get("noaa_assume_sample_rate_hz", 48000))
+        sr_target = int(noaa_cfg.get("assume_sample_rate_hz", 48000))
     else:
         sr_target = int(sr_target_cfg)
 
     chunk_sec = float(dl["raw_segment_duration"])
-    target_hours = float(dl.get("noaa_hours_per_deployment", 1.5))
+    target_hours = float(noaa_cfg.get("hours_per_deployment", 1.5))
     target_seconds = target_hours * 3600.0
-    only_new_files = bool(dl.get("noaa_only_new_files", False))
-    delete_downloaded = bool(dl.get("noaa_delete_downloaded_after_processing", False))
+    only_new_files = bool(noaa_cfg.get("only_new_files", False))
+    delete_downloaded = bool(noaa_cfg.get("delete_downloaded_after_processing", False))
 
-    max_files_cfg = dl.get("noaa_max_files_per_deployment")
-    if max_files_cfg is None or str(max_files_cfg).strip().lower() in {"none", "null", ""}:
+    max_files_cfg = noaa_cfg.get("max_files_per_deployment")
+    if max_files_cfg is None or str(max_files_cfg).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
         max_files_per_deployment: Optional[int] = None
     else:
         max_files_per_deployment = int(max_files_cfg)
 
-    sample_rate_hz = int(dl.get("noaa_assume_sample_rate_hz", 48000))
-    sample_bits = int(dl.get("noaa_sample_bits", 16))
-    channels = int(dl.get("noaa_channels", 1))
-    seed = int(dl.get("noaa_random_seed", 42))
+    sample_rate_hz = int(noaa_cfg.get("assume_sample_rate_hz", 48000))
+    sample_bits = int(noaa_cfg.get("sample_bits", 16))
+    channels = int(noaa_cfg.get("channels", 1))
+    seed = int(noaa_cfg.get("random_seed", 42))
 
     total_seconds = [0.0]
     total_downloaded_bytes = 0

@@ -107,20 +107,23 @@ def stream_download(url: str, dst: Path, chunk_mb: int = 4) -> Path:
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(cfg: DictConfig):
     dl = cfg["data_loading"]
+    voices_cfg = dl["sources"]["voices_in_the_sea"]
     out_root = Path(dl["raw_datasets_path"])
-    out_dir = out_root / "voices_in_the_sea"
+    out_dir = out_root / str(voices_cfg.get("output_dir_name", "voices_in_the_sea"))
     audio_dir = out_dir / "audio"
     manifest_path = out_dir / "manifest.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    base_url = BASE_URL_DEFAULT.rstrip("/") + "/"
-    include_dirs = []
+    base_url = str(voices_cfg.get("base_url", BASE_URL_DEFAULT)).rstrip("/") + "/"
+    include_dirs = list(voices_cfg.get("include_dirs", []) or [])
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
 
-    tmp_dir = out_root / "_tmp" / "voices_in_the_sea"
+    tmp_dir = out_root / "_tmp" / str(
+        voices_cfg.get("tmp_dir_name", "voices_in_the_sea")
+    )
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     total_seconds = [0.0]

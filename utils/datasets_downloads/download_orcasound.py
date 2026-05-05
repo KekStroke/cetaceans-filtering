@@ -98,8 +98,8 @@ def _list_s3_audio_objects(s3, bucket: str, prefix: str) -> List[AudioObject]:
     return objects
 
 
-def _parse_sources_from_config(dl: DictConfig) -> List[Source]:
-    cfg_sources = dl.get("orcasound_sources")
+def _parse_sources_from_config(orcasound_cfg: Dict[str, object]) -> List[Source]:
+    cfg_sources = orcasound_cfg.get("sources")
     if not cfg_sources:
         return _unique_sources(DEFAULT_SOURCES)
 
@@ -113,8 +113,10 @@ def _parse_sources_from_config(dl: DictConfig) -> List[Source]:
     return _unique_sources(parsed) or _unique_sources(DEFAULT_SOURCES)
 
 
-def _filter_sources_by_prefixes(sources: List[Source], dl: DictConfig) -> List[Source]:
-    selected_prefixes_cfg = dl.get("orcasound_selected_prefixes")
+def _filter_sources_by_prefixes(
+    sources: List[Source], orcasound_cfg: Dict[str, object]
+) -> List[Source]:
+    selected_prefixes_cfg = orcasound_cfg.get("selected_prefixes")
     if not selected_prefixes_cfg:
         return sources
 
@@ -156,9 +158,10 @@ def _probe_duration_seconds(path: Path) -> Optional[float]:
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(config: DictConfig):
     dl = config["data_loading"]
+    orcasound_cfg = dl["sources"]["orcasound"]
 
     out_root = Path(dl["raw_datasets_path"])
-    dataset_root = out_root / str(dl.get("orcasound_output_dir", "orcasound"))
+    dataset_root = out_root / str(orcasound_cfg.get("output_dir_name", "orcasound"))
     dataset_root.mkdir(parents=True, exist_ok=True)
 
     sr_target_cfg = dl.get("raw_sample_rate")
@@ -167,17 +170,17 @@ def main(config: DictConfig):
         "null",
         "",
     }:
-        sr_target = int(dl.get("orcasound_assume_sample_rate_hz", 48000))
+        sr_target = int(orcasound_cfg.get("assume_sample_rate_hz", 48000))
     else:
         sr_target = int(sr_target_cfg)
     chunk_sec = float(dl["raw_segment_duration"])
 
-    only_new_files = bool(dl.get("orcasound_only_new_files", False))
+    only_new_files = bool(orcasound_cfg.get("only_new_files", False))
     delete_downloaded = bool(
-        dl.get("orcasound_delete_downloaded_after_processing", False)
+        orcasound_cfg.get("delete_downloaded_after_processing", False)
     )
-    delete_nonmatching = bool(dl.get("orcasound_delete_nonmatching_downloads", True))
-    max_files_cfg = dl.get("orcasound_max_files_per_source")
+    delete_nonmatching = bool(orcasound_cfg.get("delete_nonmatching_downloads", True))
+    max_files_cfg = orcasound_cfg.get("max_files_per_source")
     if max_files_cfg is None or str(max_files_cfg).strip().lower() in {
         "none",
         "null",
@@ -186,7 +189,7 @@ def main(config: DictConfig):
         max_files_per_source: Optional[int] = None
     else:
         max_files_per_source = int(max_files_cfg)
-    target_hours_cfg = dl.get("orcasound_target_hours_total")
+    target_hours_cfg = orcasound_cfg.get("target_hours_total")
     if target_hours_cfg is None or str(target_hours_cfg).strip().lower() in {
         "none",
         "null",
@@ -198,8 +201,8 @@ def main(config: DictConfig):
     target_duration_seconds: Optional[float] = (
         None if target_hours_total is None else target_hours_total * 3600.0
     )
-    duration_min_cfg = dl.get("orcasound_duration_min_minutes")
-    duration_max_cfg = dl.get("orcasound_duration_max_minutes")
+    duration_min_cfg = orcasound_cfg.get("duration_min_minutes")
+    duration_max_cfg = orcasound_cfg.get("duration_max_minutes")
     duration_min_minutes: Optional[float] = (
         None
         if duration_min_cfg is None
@@ -218,8 +221,8 @@ def main(config: DictConfig):
         and duration_min_minutes > duration_max_minutes
     ):
         raise ValueError(
-            "data_loading.orcasound_duration_min_minutes must be <= "
-            "data_loading.orcasound_duration_max_minutes"
+            "data_loading.sources.orcasound.duration_min_minutes must be <= "
+            "data_loading.sources.orcasound.duration_max_minutes"
         )
     duration_min_seconds = (
         None if duration_min_minutes is None else duration_min_minutes * 60.0
@@ -227,21 +230,26 @@ def main(config: DictConfig):
     duration_max_seconds = (
         None if duration_max_minutes is None else duration_max_minutes * 60.0
     )
-    assume_minutes_per_file = float(dl.get("orcasound_assume_minutes_per_file", 5.0))
+    assume_minutes_per_file = float(orcasound_cfg.get("assume_minutes_per_file", 5.0))
     if assume_minutes_per_file <= 0:
-        raise ValueError("data_loading.orcasound_assume_minutes_per_file must be > 0")
+        raise ValueError(
+            "data_loading.sources.orcasound.assume_minutes_per_file must be > 0"
+        )
     max_total_files: Optional[int] = None
     if target_hours_total is not None:
         max_total_files = int((target_hours_total * 60.0) // assume_minutes_per_file)
         max_total_files = max(max_total_files, 1)
-    seed = int(dl.get("orcasound_random_seed", 42))
+    seed = int(orcasound_cfg.get("random_seed", 42))
 
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-    sources = _filter_sources_by_prefixes(_parse_sources_from_config(dl), dl)
+    sources = _filter_sources_by_prefixes(
+        _parse_sources_from_config(orcasound_cfg), orcasound_cfg
+    )
     if not sources:
         raise ValueError(
             "No Orcasound sources selected. "
-            "Check data_loading.orcasound_selected_prefixes or data_loading.orcasound_sources."
+            "Check data_loading.sources.orcasound.selected_prefixes or "
+            "data_loading.sources.orcasound.sources."
         )
 
     total_seconds = [0.0]

@@ -13,16 +13,17 @@ from tqdm import tqdm
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(config: DictConfig):
     dl = config["data_loading"]
+    watkins_cfg = dl["sources"]["watkins"]
     out_root = Path(dl["raw_datasets_path"])
-    out_dir = out_root / "watkins"
+    out_dir = out_root / str(watkins_cfg.get("output_dir_name", "watkins"))
     manifest_path = out_dir / "manifest.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    hf_name = "confit/wmms-parquet"
-    splits = ["train", "test"]
+    hf_name = str(watkins_cfg.get("hf_name", "confit/wmms-parquet"))
+    splits = list(watkins_cfg.get("splits", ["train", "test"]))
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
-    progress_every = 50
+    progress_every = int(watkins_cfg.get("progress_every", 50))
 
     total_seconds = [0.0]
     processed = 0

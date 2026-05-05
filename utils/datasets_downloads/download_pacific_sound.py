@@ -95,18 +95,27 @@ def _config_list(value, default: Optional[Sequence] = None) -> Optional[List]:
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(cfg: DictConfig):
     dl = cfg["data_loading"]
+    pacific_cfg = dl["sources"]["pacific_sound"]
     out_root = Path(dl["raw_datasets_path"])
-    out_dir = out_root / str(dl.get("pacific_sound_output_dir", "pacific_sound"))
+    out_dir = out_root / str(pacific_cfg.get("output_dir_name", "pacific_sound"))
     audio_dir = out_dir / "audio"
     manifest_path = out_dir / "manifest.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
     audio_dir.mkdir(parents=True, exist_ok=True)
 
-    tier = str(dl.get("pacific_sound_tier", "256khz")).lower()
-    years = [int(y) for y in (_config_list(dl.get("pacific_sound_years"), [2016]) or [])]
+    tier = str(pacific_cfg.get("tier", "256khz")).lower()
+    years = [
+        int(y)
+        for y in (
+            _config_list(pacific_cfg.get("years", [2016]), [2016])
+            or []
+        )
+    ]
     if not years:
-        raise ValueError("data_loading.pacific_sound_years must contain at least one year")
-    months = _config_list(dl.get("pacific_sound_months"))
+        raise ValueError(
+            "data_loading.sources.pacific_sound.years must contain at least one year"
+        )
+    months = _config_list(pacific_cfg.get("months"))
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])

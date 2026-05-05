@@ -4,124 +4,127 @@ raw_datasets_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-
 raw_segment_duration: -1 # sec
 raw_sample_rate: None
 
-# NOAA ONMS / SanctSound sampling
-noaa_bucket: noaa-passive-bioacoustic
-noaa_output_dir: noaa_onms
-noaa_hours_per_deployment: 1000000
-noaa_only_new_files: true
-noaa_delete_downloaded_after_processing: true
-noaa_max_files_per_deployment: null
-noaa_random_seed: 42
-noaa_assume_sample_rate_hz: 48000
-noaa_sample_bits: 16
-noaa_channels: 1
-noaa_deployment_prefixes:
-  # Most useful for SSL
-  # - dclde/
-  # - pifsc/
-  # - nefsc/
-  # - afsc/
-  # - sanctsound/
-  # SanctSound SB01
-  - sanctsound/audio/sb01/sanctsound_sb01_01
-  - sanctsound/audio/sb01/sanctsound_sb01_02
-  - sanctsound/audio/sb01/sanctsound_sb01_03
-  - sanctsound/audio/sb01/sanctsound_sb01_06
-  - sanctsound/audio/sb01/sanctsound_sb01_07
-  - sanctsound/audio/sb01/sanctsound_sb01_08
-  - sanctsound/audio/sb01/sanctsound_sb01_09
-  - sanctsound/audio/sb01/sanctsound_sb01_10
-  - sanctsound/audio/sb01/sanctsound_sb01_11
-  - sanctsound/audio/sb01/sanctsound_sb01_12
-  - sanctsound/audio/sb01/sanctsound_sb01_13
-  - sanctsound/audio/sb01/sanctsound_sb01_14
-  - sanctsound/audio/sb01/sanctsound_sb01_15
-  - sanctsound/audio/sb01/sanctsound_sb01_16
-  - sanctsound/audio/sb01/sanctsound_sb01_17
-  - sanctsound/audio/sb01/sanctsound_sb01_18
-  - sanctsound/audio/sb01/sanctsound_sb01_19
-  - sanctsound/audio/sb01/sanctsound_sb01_20
-  - sanctsound/audio/sb01/sanctsound_sb01_21
-  # SanctSound SB02
-  - sanctsound/audio/sb02/sanctsound_sb02_01
-  - sanctsound/audio/sb02/sanctsound_sb02_02
-  - sanctsound/audio/sb02/sanctsound_sb02_03
-  - sanctsound/audio/sb02/sanctsound_sb02_06
-  - sanctsound/audio/sb02/sanctsound_sb02_07
-  - sanctsound/audio/sb02/sanctsound_sb02_08
-  - sanctsound/audio/sb02/sanctsound_sb02_09
-  - sanctsound/audio/sb02/sanctsound_sb02_10
-  - sanctsound/audio/sb02/sanctsound_sb02_11
-  - sanctsound/audio/sb02/sanctsound_sb02_12
-  - sanctsound/audio/sb02/sanctsound_sb02_13
-  - sanctsound/audio/sb02/sanctsound_sb02_14
-  - sanctsound/audio/sb02/sanctsound_sb02_15
-  - sanctsound/audio/sb02/sanctsound_sb02_16
-  - sanctsound/audio/sb02/sanctsound_sb02_17
-  - sanctsound/audio/sb02/sanctsound_sb02_18
-  - sanctsound/audio/sb02/sanctsound_sb02_19
-  - sanctsound/audio/sb02/sanctsound_sb02_20
-  - sanctsound/audio/sb02/sanctsound_sb02_21
-  # Other SanctSound sites (examples)
-  - sanctsound/audio/sb03/sanctsound_sb03_01
-  - sanctsound/audio/sb03/sanctsound_sb03_10
-  - sanctsound/audio/sb03/sanctsound_sb03_21
-  - sanctsound/audio/fk01/sanctsound_fk01_01
-  - sanctsound/audio/fk01/sanctsound_fk01_03
-  - sanctsound/audio/fk01/sanctsound_fk01_08
-  - sanctsound/audio/ci01/sanctsound_ci01_01
-  - sanctsound/audio/ci01/sanctsound_ci01_04
-  - sanctsound/audio/ci01/sanctsound_ci01_08
-  - sanctsound/audio/mb01/sanctsound_mb01_01
-  - sanctsound/audio/mb01/sanctsound_mb01_05
-  - sanctsound/audio/mb01/sanctsound_mb01_09
-
-# Orcasound (AWS Open Data)
-orcasound_output_dir: orcasound
-orcasound_only_new_files: true
-orcasound_max_files_per_source: null
-orcasound_target_hours_total: null
-orcasound_assume_minutes_per_file: 5.0
-orcasound_duration_min_minutes: null
-orcasound_duration_max_minutes: null
-orcasound_random_seed: 42
-orcasound_assume_sample_rate_hz: 48000
-orcasound_delete_downloaded_after_processing: true
-orcasound_delete_nonmatching_downloads: true
-orcasound_selected_prefixes: null
-# Optional override for DEFAULT_SOURCES from download_orcasound.py:
-# orcasound_sources:
-#   - bucket: acoustic-sandbox
-#     prefix: 2019-Orcasound-examples/
-# Optional source subset from DEFAULT_SOURCES:
-# orcasound_selected_prefixes:
-#   - 2019-Orcasound-examples/
-#   - humpbacks/
-# Optional duration filtering by file length:
-# orcasound_duration_min_minutes: 4.0
-# orcasound_duration_max_minutes: 6.0
-
-# Pacific Sound
-pacific_sound_output_dir: pacific_sound
-pacific_sound_tier: 256khz # 256khz, 16khz, 2khz
-pacific_sound_years: [2016, 2017, 2023] # starting from 2015
-pacific_sound_months: ["11", "12"] # null means all months
-
-# train_dataset_path: data/orcasound/audio_train
-# val_dataset_path: data/orcasound/audio_val
-
-train_dataset_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal/orcasound/audio_train
-val_dataset_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal/orcasound/audio_val
-
-sample_rate: 24000
-segment_duration: 10 # sec
-segments_duration_filtering_factor: 1.2 # should be >= 1
-random_segment: True
-
-batch_size: 32
-num_workers: 16
-
 sources:
+  # Used by utils/datasets_downloads/download_noaa_onms.py
+  noaa:
+    bucket: noaa-passive-bioacoustic
+    output_dir_name: noaa_onms
+    hours_per_deployment: 1000000
+    only_new_files: true
+    delete_downloaded_after_processing: true
+    max_files_per_deployment: null
+    random_seed: 42
+    assume_sample_rate_hz: 48000
+    sample_bits: 16
+    channels: 1
+    deployment_prefixes:
+      # Most useful for SSL
+      # - dclde/
+      # - pifsc/
+      # - nefsc/
+      # - afsc/
+      # - sanctsound/
+      # SanctSound SB01
+      - sanctsound/audio/sb01/sanctsound_sb01_01
+      - sanctsound/audio/sb01/sanctsound_sb01_02
+      - sanctsound/audio/sb01/sanctsound_sb01_03
+      - sanctsound/audio/sb01/sanctsound_sb01_06
+      - sanctsound/audio/sb01/sanctsound_sb01_07
+      - sanctsound/audio/sb01/sanctsound_sb01_08
+      - sanctsound/audio/sb01/sanctsound_sb01_09
+      - sanctsound/audio/sb01/sanctsound_sb01_10
+      - sanctsound/audio/sb01/sanctsound_sb01_11
+      - sanctsound/audio/sb01/sanctsound_sb01_12
+      - sanctsound/audio/sb01/sanctsound_sb01_13
+      - sanctsound/audio/sb01/sanctsound_sb01_14
+      - sanctsound/audio/sb01/sanctsound_sb01_15
+      - sanctsound/audio/sb01/sanctsound_sb01_16
+      - sanctsound/audio/sb01/sanctsound_sb01_17
+      - sanctsound/audio/sb01/sanctsound_sb01_18
+      - sanctsound/audio/sb01/sanctsound_sb01_19
+      - sanctsound/audio/sb01/sanctsound_sb01_20
+      - sanctsound/audio/sb01/sanctsound_sb01_21
+      # SanctSound SB02
+      - sanctsound/audio/sb02/sanctsound_sb02_01
+      - sanctsound/audio/sb02/sanctsound_sb02_02
+      - sanctsound/audio/sb02/sanctsound_sb02_03
+      - sanctsound/audio/sb02/sanctsound_sb02_06
+      - sanctsound/audio/sb02/sanctsound_sb02_07
+      - sanctsound/audio/sb02/sanctsound_sb02_08
+      - sanctsound/audio/sb02/sanctsound_sb02_09
+      - sanctsound/audio/sb02/sanctsound_sb02_10
+      - sanctsound/audio/sb02/sanctsound_sb02_11
+      - sanctsound/audio/sb02/sanctsound_sb02_12
+      - sanctsound/audio/sb02/sanctsound_sb02_13
+      - sanctsound/audio/sb02/sanctsound_sb02_14
+      - sanctsound/audio/sb02/sanctsound_sb02_15
+      - sanctsound/audio/sb02/sanctsound_sb02_16
+      - sanctsound/audio/sb02/sanctsound_sb02_17
+      - sanctsound/audio/sb02/sanctsound_sb02_18
+      - sanctsound/audio/sb02/sanctsound_sb02_19
+      - sanctsound/audio/sb02/sanctsound_sb02_20
+      - sanctsound/audio/sb02/sanctsound_sb02_21
+      # Other SanctSound sites (examples)
+      - sanctsound/audio/sb03/sanctsound_sb03_01
+      - sanctsound/audio/sb03/sanctsound_sb03_10
+      - sanctsound/audio/sb03/sanctsound_sb03_21
+      - sanctsound/audio/fk01/sanctsound_fk01_01
+      - sanctsound/audio/fk01/sanctsound_fk01_03
+      - sanctsound/audio/fk01/sanctsound_fk01_08
+      - sanctsound/audio/ci01/sanctsound_ci01_01
+      - sanctsound/audio/ci01/sanctsound_ci01_04
+      - sanctsound/audio/ci01/sanctsound_ci01_08
+      - sanctsound/audio/mb01/sanctsound_mb01_01
+      - sanctsound/audio/mb01/sanctsound_mb01_05
+      - sanctsound/audio/mb01/sanctsound_mb01_09
+
+  # Used by utils/datasets_downloads/download_orcasound.py
+  orcasound:
+    output_dir_name: orcasound
+    only_new_files: true
+    max_files_per_source: null
+    target_hours_total: null
+    assume_minutes_per_file: 5.0
+    duration_min_minutes: null
+    duration_max_minutes: null
+    random_seed: 42
+    assume_sample_rate_hz: 48000
+    delete_downloaded_after_processing: true
+    delete_nonmatching_downloads: true
+    selected_prefixes: null
+    # Optional override for DEFAULT_SOURCES from download_orcasound.py:
+    # sources:
+    #   - bucket: acoustic-sandbox
+    #     prefix: 2019-Orcasound-examples/
+    # Optional source subset from DEFAULT_SOURCES:
+    # selected_prefixes:
+    #   - 2019-Orcasound-examples/
+    #   - humpbacks/
+    # Optional duration filtering by file length:
+    # duration_min_minutes: 4.0
+    # duration_max_minutes: 6.0
+
+  # Used by utils/datasets_downloads/download_pacific_sound.py
+  pacific_sound:
+    output_dir_name: pacific_sound
+    tier: 256khz # 256khz, 16khz, 2khz
+    years: [2016, 2017, 2023] # starting from 2015
+    months: ["11", "12"] # null means all months
+
+  # Used by utils/datasets_downloads/download_voices_in_the_sea.py
+  voices_in_the_sea:
+    output_dir_name: voices_in_the_sea
+    base_url: https://voicesinthesea.ucsd.edu/species/spectrogramPlayerComponents/audio/
+    include_dirs: []
+    tmp_dir_name: voices_in_the_sea
+
+  # Used by utils/datasets_downloads/download_watkins.py
+  watkins:
+    output_dir_name: watkins
+    hf_name: confit/wmms-parquet
+    splits: [train, test]
+    progress_every: 50
+
   # Used by utils/datasets_downloads/download_onc_hydrophones.py
   onc:
     token: null            # omit and use ONC_TOKEN

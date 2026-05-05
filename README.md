@@ -90,30 +90,30 @@ uv run python filtering/embed/perch_v2_embed.py \
 ## Scenario 4 - NOAA ONMS / SanctSound
 
 Deployment list is configured in `configs/data_loading/data_loading.yaml`
-via `noaa_deployment_prefixes`.
+via `data_loading.sources.noaa.deployment_prefixes`.
 
 Download only new files, about 4 hours per run (no chunking):
 
 ```powershell
-uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.noaa_only_new_files=true data_loading.noaa_hours_per_deployment=1.34 data_loading.raw_segment_duration=-1
+uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.sources.noaa.only_new_files=true data_loading.sources.noaa.hours_per_deployment=1.34 data_loading.raw_segment_duration=-1
 ```
 
 Download only new files, exactly 1 file from each deployment:
 
 ```powershell
-uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.noaa_only_new_files=true data_loading.noaa_max_files_per_deployment=1 data_loading.raw_segment_duration=-1
+uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.sources.noaa.only_new_files=true data_loading.sources.noaa.max_files_per_deployment=1 data_loading.raw_segment_duration=-1
 ```
 
 Download only new files, large pack (up to 10 files from each deployment):
 
 ```powershell
-uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.noaa_only_new_files=true data_loading.noaa_max_files_per_deployment=10 data_loading.noaa_hours_per_deployment=999 data_loading.raw_segment_duration=-1
+uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.sources.noaa.only_new_files=true data_loading.sources.noaa.max_files_per_deployment=10 data_loading.sources.noaa.hours_per_deployment=999 data_loading.raw_segment_duration=-1
 ```
 
 Same 4-hour run, but split output into 10-second WAV chunks:
 
 ```powershell
-uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.noaa_only_new_files=true data_loading.noaa_hours_per_deployment=1.34 data_loading.raw_segment_duration=10
+uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.sources.noaa.only_new_files=true data_loading.sources.noaa.hours_per_deployment=1.34 data_loading.raw_segment_duration=10
 ```
 
 Output paths:
@@ -131,17 +131,17 @@ Please cite NOAA SanctSound/ONMS data according to deployment metadata
 Full Orcasound run (all default sources):
 
 ```powershell
-uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_max_files_per_source=null data_loading.orcasound_target_hours_total=null
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.sources.orcasound.max_files_per_source=null data_loading.sources.orcasound.target_hours_total=null
 ```
 
 Small run (~5 hours total) with near-5-minute clips (4-6 min):
 
 ```powershell
-uv run python utils/datasets_downloads/download_orcasound.py data_loading.orcasound_target_hours_total=5 data_loading.orcasound_duration_min_minutes=4 data_loading.orcasound_duration_max_minutes=6 data_loading.orcasound_assume_minutes_per_file=5 data_loading.orcasound_max_files_per_source=null
+uv run python utils/datasets_downloads/download_orcasound.py data_loading.sources.orcasound.target_hours_total=5 data_loading.sources.orcasound.duration_min_minutes=4 data_loading.sources.orcasound.duration_max_minutes=6 data_loading.sources.orcasound.assume_minutes_per_file=5 data_loading.sources.orcasound.max_files_per_source=null
 ```
 
 Note: files outside the duration filter are downloaded for probing and then removed by default
-(`data_loading.orcasound_delete_nonmatching_downloads=true`).
+(`data_loading.sources.orcasound.delete_nonmatching_downloads=true`).
 
 Output paths:
 
