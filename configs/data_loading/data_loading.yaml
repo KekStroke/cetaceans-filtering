@@ -120,3 +120,26 @@ random_segment: True
 
 batch_size: 32
 num_workers: 16
+
+sources:
+  # Used by utils/datasets_downloads/download_onc_hydrophones.py
+  onc:
+    token: null            # omit and use ONC_TOKEN
+    output_dir_name: onc
+    tmp_dir_name: _tmp_onc
+    split_by: auto         # auto | location_code | device_code
+    delete_downloaded_after: true
+    progress_every: 50
+    device_category_code: HYDROPHONE
+    default_archive_params: {}   # optional shared camelCase filters
+    extra_params: {}              # optional global extras
+    targets:
+      - location_code: SCVIP
+        date_from: "2021-05-01"
+        date_to: "2021-05-02"
+        extension: flac
+        include_diverted: false
+        max_files: 5
+        subfolder: null            # override output folder name
+        device_category_code: null  # per-target category override
+        extra_params: {}             # merges into getArchivefile params
