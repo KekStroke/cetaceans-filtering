@@ -25,3 +25,15 @@ data/orcasound/
 
 outputs/
 data/
+# Voxaboxen local input data (large/private); keep only folder placeholders.
+!data/
+data/*
+!data/.gitkeep
+!data/voxaboxen/
+data/voxaboxen/*
+!data/voxaboxen/audio/
+!data/voxaboxen/annotations/
+data/voxaboxen/audio/*
+data/voxaboxen/annotations/*
+!data/voxaboxen/audio/.gitkeep
+!data/voxaboxen/annotations/.gitkeep
