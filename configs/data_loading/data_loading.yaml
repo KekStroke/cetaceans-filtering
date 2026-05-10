@@ -1,6 +1,5 @@
 # Download configuration
-# raw_datasets_path: data
-raw_datasets_path: /mnt/shared_ru.ml.SZ-2_000180/Iskhakov/datasets/audio/marine-mammal
+raw_datasets_path: data
 raw_segment_duration: -1 # sec
 raw_sample_rate: None
 raw_skip_below_sample_rate: false

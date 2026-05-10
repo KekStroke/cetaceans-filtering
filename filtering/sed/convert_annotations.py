@@ -19,6 +19,56 @@ def _normalize_labels(raw_labels: Any) -> list[str]:
     return [str(raw_labels)]
 
 
+def _audio_keys(file_item: dict[str, Any]) -> list[str]:
+    data = file_item.get("data")
+    candidates: list[Any] = []
+    if isinstance(data, dict):
+        candidates.extend([data.get("audio"), data.get("file"), data.get("wav")])
+    candidates.extend([file_item.get("audio"), file_item.get("file_upload")])
+    out: list[str] = []
+    for raw in candidates:
+        if not raw:
+            continue
+        name = str(raw).replace("\\", "/")
+        out.append(name)
+        out.append(Path(name).name)
+    return [value for i, value in enumerate(out) if value and value not in out[:i]]
+
+
+def _events(file_item: dict[str, Any]) -> list[dict[str, Any]]:
+    direct = file_item.get("label")
+    if isinstance(direct, list):
+        return [event for event in direct if isinstance(event, dict)]
+
+    events: list[dict[str, Any]] = []
+    annotations = file_item.get("annotations", [])
+    if not isinstance(annotations, list):
+        return events
+    for annotation in annotations:
+        if not isinstance(annotation, dict) or annotation.get("was_cancelled"):
+            continue
+        results = annotation.get("result", [])
+        if not isinstance(results, list):
+            continue
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            value = result.get("value", {})
+            if not isinstance(value, dict):
+                continue
+            if "start" not in value or "end" not in value:
+                continue
+            events.append(
+                {
+                    "start": value.get("start"),
+                    "end": value.get("end"),
+                    "channel": value.get("channel"),
+                    "labels": value.get("labels") or value.get("choices"),
+                }
+            )
+    return events
+
+
 def _build_rows(
     annotations: list[dict[str, Any]],
     join_multilabels: bool,
@@ -26,11 +76,9 @@ def _build_rows(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for file_idx, file_item in enumerate(annotations):
-        audio = str(file_item.get("audio", ""))
+        audio = next(iter(_audio_keys(file_item)), "")
         source_id = file_item.get("id")
-        events = file_item.get("label", [])
-        if not isinstance(events, list):
-            continue
+        events = _events(file_item)
 
         for event_idx, event in enumerate(events):
             if not isinstance(event, dict):
@@ -89,7 +137,7 @@ def main(config: DictConfig) -> None:
     join_multilabels = bool(cfg["join_multilabels"])
     label_separator = str(cfg["label_separator"])
 
-    with open(input_json, "r", encoding="utf-8") as f:
+    with open(input_json, "r", encoding="utf-8-sig") as f:
         payload = json.load(f)
 
     if not isinstance(payload, list):

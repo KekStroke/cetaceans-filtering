@@ -4,13 +4,15 @@ Cetacean audio filtering and classification built on [Perch](https://github.com/
 
 ## Setup
 
-```bash
-uv sync              # base deps
-uv sync --group perch  # Perch + TensorFlow (needed for embedding)
+```powershell
+uv sync
+uv sync --group perch
 ```
 
 All scripts use [Hydra](https://hydra.cc). Override any config value inline: `key=value`.
 Full parameter docs live in each YAML under `configs/`.
+
+Hydra timestamp folders are disabled in `configs/config.yaml`; script artifacts go to explicit `data/...` and `outputs/...` paths.
 
 ---
 
@@ -19,7 +21,7 @@ Full parameter docs live in each YAML under `configs/`.
 ```text
 filtering/
 |-- embed/
-|   `-- perch_v2_embed.py           # compute Perch embeddings for any audio dataset
+|   `-- perch_v2_embed.py           # compute Perch embeddings for audio datasets
 |-- watkins/
 |   |-- train_classifier.py         # multiclass species classifier
 |   `-- classifier/                 # data loading, metrics, reporting, pipeline
@@ -30,26 +32,29 @@ filtering/
 `-- voxaboxen/
     |-- prepare_dataset.py          # Label Studio JSON -> Voxaboxen/Raven files
     |-- run_training.py             # call external Voxaboxen training
-    `-- run_inference.py            # call external Voxaboxen inference
+    |-- run_inference.py            # call external Voxaboxen inference
+    `-- report_results.py           # collect plots and metrics for a run
 
 utils/
 `-- datasets_downloads/
-    |-- download_watkins.py         # download Watkins marine mammal dataset
-    |-- download_noaa_onms.py       # sample small subsets from NOAA ONMS / SanctSound
-    |-- download_orcasound.py       # download and process Orcasound AWS Open Data
-    `-- download_manual_sed.py      # download manual SED dataset from Google Drive
+    |-- download_watkins.py
+    |-- download_noaa_onms.py
+    |-- download_orcasound.py
+    |-- download_pacific_sound.py
+    |-- download_voices_in_the_sea.py
+    `-- download_onc_hydrophones.py
 ```
 
 ---
 
 ## Scenario 1 - Watkins species classifier
 
-```bash
+```powershell
 # 1. Download dataset
 uv run python utils/datasets_downloads/download_watkins.py
 
 # 2. Compute embeddings
-uv run python filtering/embed/perch_v2_embed.py
+uv run python filtering/embed/perch_v2_embed.py perch_embeddings.audio_dir=data/watkins perch_embeddings.dataset_name=watkins perch_embeddings.db_path=outputs/perch/watkins/db perch_embeddings.export_dir=outputs/perch/watkins/export
 
 # 3. Train multiclass classifier  (labels parsed from filenames)
 uv run python filtering/watkins/train_classifier.py
@@ -59,8 +64,11 @@ uv run python filtering/watkins/train_classifier.py
 
 ## Scenario 2 - SED sound/noise binary classifier
 
-```bash
+```powershell
 # 1. Download folder from Google Drive
+#    Expected layout:
+#    - Audio: data/sound-event-detection/*.wav
+#    - Label Studio JSON: data/sound-event-detection/annotations.json
 
 # 2. Convert annotations JSON -> flat manifest CSV
 uv run python filtering/sed/convert_annotations.py
@@ -74,18 +82,16 @@ uv run python filtering/sed/train_classifier.py
 
 **Label logic per 5s window:**
 
-- overlaps a `sound` event by >= `min_overlap_s` -> `sound`
+- overlaps a `sound` event by >= `sed_training.min_overlap_s` -> `sound`
 - otherwise -> `noise`
-- artifact windows: kept as `noise` (`treat_artifact_as_noise=true`) or excluded (`false`)
+- artifact windows: kept as `noise` (`sed_training.treat_artifact_as_noise=true`) or excluded (`false`)
 
 ---
 
 ## Scenario 3 - Re-embed with a different model
 
-```bash
-uv run python filtering/embed/perch_v2_embed.py \
-  perch_embeddings.model_name=surfperch \
-  perch_embeddings.drop_existing_db=true
+```powershell
+uv run python filtering/embed/perch_v2_embed.py perch_embeddings.model_name=surfperch perch_embeddings.drop_existing_db=true
 # then re-run the relevant classifier script
 ```
 
@@ -122,11 +128,12 @@ uv run python utils/datasets_downloads/download_noaa_onms.py data_loading.source
 
 Output paths:
 
-- Download cache (original NOAA files): `data/noaa_onms/downloads/...`
-- Output audio for labeling/training: `data/noaa_onms/audio/...`
+- Download cache (original NOAA files): `data/noaa_onms/<source>/downloads/...`
+- Output audio for labeling/training: `data/noaa_onms/<source>/audio/...`
+- Manifest: `data/noaa_onms/<source>/manifest.jsonl`
 
-Please cite NOAA SanctSound/ONMS data according to deployment metadata
-(DOI: https://doi.org/10.25921/saca-sp25).
+Please cite NOAA SanctSound/ONMS data according to deployment metadata:
+https://doi.org/10.25921/saca-sp25
 
 ---
 
@@ -149,8 +156,9 @@ Note: files outside the duration filter are downloaded for probing and then remo
 
 Output paths:
 
-- Download cache (original Orcasound files): `data/orcasound/downloads/...`
-- Output audio for labeling/training: `data/orcasound/audio/...`
+- Download cache (original Orcasound files): `data/orcasound/<source>/downloads/...`
+- Output audio for labeling/training: `data/orcasound/<source>/audio/...`
+- Manifest: `data/orcasound/<source>/manifest.jsonl`
 
 Sources are from AWS Open Data Orcasound registry:
 https://registry.opendata.aws/orcasound/
@@ -159,7 +167,8 @@ https://registry.opendata.aws/orcasound/
 
 ## Scenario 6 - Voxaboxen external SED
 
-Voxaboxen is used as an external checkout, not copied into this repository. This scenario is for checking Voxaboxen on our own Label Studio audio datasets. By default, the config expects the full Voxaboxen repo next to this project as `../voxaboxen`.
+Voxaboxen is used as an external checkout, not copied into this repository.
+By default, the config expects the full Voxaboxen repo next to this project as `../voxaboxen`.
 
 Put inputs here or override the paths in the command:
 
@@ -177,7 +186,10 @@ uv run python filtering/voxaboxen/prepare_dataset.py voxaboxen.dataset_name=my_d
 # 2. Train Voxaboxen through the external checkout
 uv run python filtering/voxaboxen/run_training.py
 
-# 3. Run inference with the trained experiment
+# 3. Collect plots and metrics for viewing/downloading
+uv run python filtering/voxaboxen/report_results.py
+
+# 4. Run inference with the trained experiment
 uv run python filtering/voxaboxen/run_inference.py
 ```
 
@@ -199,6 +211,9 @@ Output paths:
 
 - Prepared Voxaboxen dataset: `outputs/voxaboxen/datasets/<dataset_name>/`
 - Voxaboxen project config and runs: `outputs/voxaboxen/projects/<dataset_name>_experiment/`
+- Compact report: `<experiment>/report/report.md`
+- Metrics table: `<experiment>/report/metrics.csv`
+- Loss plot: `<experiment>/report/loss.png`
 - Main comparison metrics: `mean_ap@0.5`, `mean_ap@0.8`
 - `unknown_labels` are treated as background/noise for binary whale-sound detection
 
@@ -206,16 +221,17 @@ Output paths:
 
 ## Outputs
 
-| File             | Description                                          |
-| ---------------- | ---------------------------------------------------- |
-| `embeddings.npy` | `[N, 1280]` float32 array, one row per 5s window     |
-| `manifest.csv`   | Window index, filename, start/end time               |
-| `model.joblib`   | `{"model": Pipeline, "label_encoder": LabelEncoder}` |
-| `metrics.json`   | Full per-class metrics and confusion matrices        |
-| `summary.json`   | Macro-F1 per split + report image paths              |
+| File | Description |
+| --- | --- |
+| `embeddings.npy` | `[N, 1280]` float32 array, one row per 5s window |
+| `manifest.csv` | Window index, filename, start/end time |
+| `model.joblib` | `{"model": Pipeline, "label_encoder": LabelEncoder}` |
+| `metrics.json` | Full per-class metrics and confusion matrices |
+| `summary.json` | Macro-F1 per split + report image paths |
 
 ```python
 import joblib
+
 bundle = joblib.load("outputs/.../model.joblib")
 labels = bundle["label_encoder"].inverse_transform(
     bundle["model"].predict(X)  # X: [M, 1280] numpy array

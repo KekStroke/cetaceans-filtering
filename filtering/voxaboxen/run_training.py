@@ -14,7 +14,13 @@ def main(config: DictConfig) -> None:
     cfg = config.voxaboxen
     voxaboxen_dir = Path(hydra.utils.to_absolute_path(str(cfg.voxaboxen_dir)))
     python_exe = Path(hydra.utils.to_absolute_path(str(cfg.voxaboxen_python)))
-    project_config = Path(hydra.utils.to_absolute_path(str(cfg.output_project_dir))) / "project_config.yaml"
+    project_dir = Path(hydra.utils.to_absolute_path(str(cfg.output_project_dir)))
+    project_config = project_dir / "project_config.yaml"
+    experiment_dir = project_dir / str(cfg.experiment_name)
+
+    print(f"Experiment directory: {experiment_dir}")
+    print("During/after training, check train_progress.svg, train_history.yaml, val_results.yaml, test_results.yaml.")
+    print("After training, run: uv run python filtering/voxaboxen/report_results.py")
 
     cmd = [
         str(python_exe),
