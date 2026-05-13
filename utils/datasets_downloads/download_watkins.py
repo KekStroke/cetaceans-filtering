@@ -26,7 +26,7 @@ def main(config: DictConfig):
 
     hf_name = str(watkins_cfg.get("hf_name", "confit/wmms-parquet"))
     splits = list(watkins_cfg.get("splits", ["train", "test"]))
-    sr_target = dl["raw_sample_rate"]
+    sr_target = None
     chunk_sec = float(dl["raw_segment_duration"])
     min_sample_rate = resolve_min_sample_rate(
         raw_sample_rate=dl.get("raw_sample_rate"),

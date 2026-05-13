@@ -11,6 +11,7 @@ import hydra
 from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
+from parallel_utils import iter_threaded
 
 
 def _normalize_prefix(value: str) -> str:
@@ -211,16 +212,7 @@ def main(config: DictConfig):
     out_dir = out_root / str(noaa_cfg.get("output_dir_name", "noaa_onms"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    sr_target_cfg = dl.get("raw_sample_rate")
-    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {
-        "none",
-        "null",
-        "",
-    }:
-        sr_target = int(noaa_cfg.get("assume_sample_rate_hz", 48000))
-    else:
-        sr_target = int(sr_target_cfg)
-
+    sr_target = dl.get("raw_sample_rate")
     chunk_sec = float(dl["raw_segment_duration"])
     min_sample_rate = resolve_min_sample_rate(
         raw_sample_rate=dl.get("raw_sample_rate"),
@@ -245,6 +237,7 @@ def main(config: DictConfig):
     sample_bits = int(noaa_cfg.get("sample_bits", 16))
     channels = int(noaa_cfg.get("channels", 1))
     seed = int(noaa_cfg.get("random_seed", 42))
+    download_workers = max(1, int(noaa_cfg.get("download_workers", 1)))
 
     total_seconds = [0.0]
     total_downloaded_bytes = 0
@@ -258,6 +251,7 @@ def main(config: DictConfig):
         f"Max files per deployment: "
         f"{max_files_per_deployment if max_files_per_deployment is not None else 'unlimited'}"
     )
+    print(f"Download workers: {download_workers}")
     print(f"Chunking: {'disabled' if chunk_sec == -1 else f'{chunk_sec:.2f}s'}")
 
     for dep_idx, raw_prefix in enumerate(prefixes):
@@ -330,7 +324,8 @@ def main(config: DictConfig):
         )
         print(f"Selected files: {len(selected)}")
 
-        for file_idx, item in enumerate(selected):
+        def download_and_process(args: tuple[int, Dict[str, int | str]]):
+            file_idx, item = args
             object_name = str(item.get("name"))
             size = int(item.get("size", 0))
             src_name = Path(object_name).name
@@ -338,11 +333,10 @@ def main(config: DictConfig):
             stem = sanitize_stem(f"{dep_name}_{Path(src_name).stem}")
 
             if only_new_files and _processed_audio_exists(source_audio_dir, stem):
-                print(f"Already processed: {src_name}")
-                continue
+                return True, 0, 0.0, f"Already processed: {src_name}"
 
+            downloaded_bytes = 0
             if not local_src.exists() or local_src.stat().st_size != size:
-                print(f"Downloading [{file_idx + 1}/{len(selected)}]: {src_name}")
                 try:
                     _download_file(
                         bucket=bucket,
@@ -350,26 +344,33 @@ def main(config: DictConfig):
                         dst_path=local_src,
                         expected_size=size,
                     )
-                    total_downloaded_bytes += size
                 except Exception as exc:
-                    print(f"Skip '{src_name}' due to download error: {exc}")
-                    continue
-            else:
-                print(f"Already downloaded: {src_name}")
+                    return (
+                        False,
+                        0,
+                        0.0,
+                        f"Skip '{src_name}' due to download error: {exc}",
+                    )
+                downloaded_bytes = size
 
+            seconds = [0.0]
             try:
                 process_large_audio(
                     src_path=local_src,
                     out_dir=source_audio_dir,
                     stem_base=stem,
-                    total_seconds_ref=total_seconds,
+                    total_seconds_ref=seconds,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
                     min_sample_rate=min_sample_rate,
                 )
             except Exception as exc:
-                print(f"Error processing '{src_name}': {exc}")
-                continue
+                return (
+                    False,
+                    downloaded_bytes,
+                    0.0,
+                    f"Error processing '{src_name}': {exc}",
+                )
 
             if delete_downloaded:
                 try:
@@ -378,6 +379,24 @@ def main(config: DictConfig):
                     print(
                         f"Warning: failed to delete downloaded file '{src_name}': {exc}"
                     )
+
+            action = "Downloaded" if downloaded_bytes else "Already downloaded"
+            return (
+                True,
+                downloaded_bytes,
+                seconds[0],
+                f"{action} + processed [{file_idx + 1}/{len(selected)}]: {src_name}",
+            )
+
+        for ok, downloaded_bytes, seconds, message in iter_threaded(
+            download_and_process,
+            enumerate(selected),
+            download_workers,
+        ):
+            print(message)
+            total_downloaded_bytes += downloaded_bytes
+            if ok:
+                total_seconds[0] += seconds
 
         manifest_entries = write_manifest(
             audio_dir=source_audio_dir,

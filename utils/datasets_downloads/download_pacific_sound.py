@@ -9,6 +9,7 @@ from botocore import UNSIGNED
 from botocore.client import Config
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
+from parallel_utils import iter_threaded
 from tqdm import tqdm
 
 AUDIO_EXTS = (".wav", ".WAV")
@@ -123,6 +124,7 @@ def main(cfg: DictConfig):
         raw_sample_rate=dl.get("raw_sample_rate"),
         raw_skip_below_sample_rate=bool(dl.get("raw_skip_below_sample_rate", False)),
     )
+    download_workers = max(1, int(pacific_cfg.get("download_workers", 1)))
 
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
 
@@ -136,45 +138,51 @@ def main(cfg: DictConfig):
     tmp_dir = out_root / "_tmp" / f"pacific-sound-{tier}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        for bucket, key in tqdm(
-            pairs, desc=f"Downloading & processing pacific-sound-{tier}"
-        ):
-            # mirror path under tmp
-            local_tmp = tmp_dir / bucket / key
-            local_tmp.parent.mkdir(parents=True, exist_ok=True)
+    def download_and_process(pair: Tuple[str, str]) -> tuple[bool, float, str]:
+        bucket, key = pair
+        local_tmp = tmp_dir / bucket / key
+        local_tmp.parent.mkdir(parents=True, exist_ok=True)
 
-            # download
-            try:
-                s3.download_file(bucket, key, str(local_tmp))
-            except Exception as e:
-                print(f"skip s3://{bucket}/{key}: {e}")
-                continue
+        try:
+            s3.download_file(bucket, key, str(local_tmp))
+        except Exception as e:
+            return False, 0.0, f"skip s3://{bucket}/{key}: {e}"
 
-            # output stem: include bucket, year/mo if present, and filename stem
-            stem_bits = [bucket, Path(key).with_suffix("").as_posix().replace("/", "_")]
-            rel_stem = sanitize_stem("_".join(stem_bits))
+        stem_bits = [bucket, Path(key).with_suffix("").as_posix().replace("/", "_")]
+        rel_stem = sanitize_stem("_".join(stem_bits))
+        seconds = [0.0]
 
-            try:
-                process_large_audio(
-                    src_path=local_tmp,
-                    out_dir=audio_dir,
-                    stem_base=rel_stem,
-                    total_seconds_ref=total_seconds,
-                    sr_target=sr_target,
-                    chunk_sec=chunk_sec,
-                    min_sample_rate=min_sample_rate,
-                )
-            except Exception as e:
-                print(f"error processing {bucket}/{key}: {e}")
-
-            processed += 1
-
-            # remove tmp
+        try:
+            process_large_audio(
+                src_path=local_tmp,
+                out_dir=audio_dir,
+                stem_base=rel_stem,
+                total_seconds_ref=seconds,
+                sr_target=sr_target,
+                chunk_sec=chunk_sec,
+                min_sample_rate=min_sample_rate,
+            )
+        except Exception as e:
+            return False, 0.0, f"error processing {bucket}/{key}: {e}"
+        finally:
             try:
                 local_tmp.unlink(missing_ok=True)
             except Exception:
                 pass
+
+        return True, seconds[0], ""
+
+    try:
+        print(f"Download workers: {download_workers}")
+        for ok, seconds, message in tqdm(
+            iter_threaded(download_and_process, pairs, download_workers),
+            desc=f"Downloading & processing pacific-sound-{tier}",
+        ):
+            if message:
+                print(message)
+            if ok:
+                total_seconds[0] += seconds
+                processed += 1
 
     finally:
         # clean tmp

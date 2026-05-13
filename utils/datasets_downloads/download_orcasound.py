@@ -1,4 +1,5 @@
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -164,15 +165,7 @@ def main(config: DictConfig):
     dataset_root = out_root / str(orcasound_cfg.get("output_dir_name", "orcasound"))
     dataset_root.mkdir(parents=True, exist_ok=True)
 
-    sr_target_cfg = dl.get("raw_sample_rate")
-    if sr_target_cfg is None or str(sr_target_cfg).strip().lower() in {
-        "none",
-        "null",
-        "",
-    }:
-        sr_target = int(orcasound_cfg.get("assume_sample_rate_hz", 48000))
-    else:
-        sr_target = int(sr_target_cfg)
+    sr_target = dl.get("raw_sample_rate")
     chunk_sec = float(dl["raw_segment_duration"])
     min_sample_rate = resolve_min_sample_rate(
         raw_sample_rate=dl.get("raw_sample_rate"),
@@ -244,6 +237,7 @@ def main(config: DictConfig):
         max_total_files = int((target_hours_total * 60.0) // assume_minutes_per_file)
         max_total_files = max(max_total_files, 1)
     seed = int(orcasound_cfg.get("random_seed", 42))
+    download_workers = max(1, int(orcasound_cfg.get("download_workers", 1)))
 
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
     sources = _filter_sources_by_prefixes(
@@ -270,6 +264,7 @@ def main(config: DictConfig):
         f"Global files cap: "
         f"{max_total_files if max_total_files is not None else 'unlimited'}"
     )
+    print(f"Download workers: {download_workers}")
     print(f"Delete downloads after processing: {delete_downloaded}")
     print(f"Delete non-matching downloads: {delete_nonmatching}")
     print(
@@ -360,6 +355,56 @@ def main(config: DictConfig):
         selected = _pick_objects(objects=objects, max_files=selection_cap, rng=rng)
         print(f"Selected files: {len(selected)}")
 
+        download_results: Dict[int, tuple[bool, Path, bool, int, str]] = {}
+
+        def download_item(file_idx: int, key: str, size: int):
+            src_name = Path(key).name
+            local_src = source_download_dir / Path(key)
+            local_src.parent.mkdir(parents=True, exist_ok=True)
+            if not local_src.exists() or local_src.stat().st_size != size:
+                try:
+                    s3.download_file(bucket, key, str(local_src))
+                except Exception as exc:
+                    return (
+                        False,
+                        local_src,
+                        False,
+                        0,
+                        f"Skip file due to download error: s3://{bucket}/{key} ({exc})",
+                    )
+                return (
+                    True,
+                    local_src,
+                    True,
+                    size,
+                    f"Downloaded [{file_idx + 1}/{len(selected)}]: {src_name}",
+                )
+            return True, local_src, False, 0, f"Already downloaded: {src_name}"
+
+        with ThreadPoolExecutor(max_workers=download_workers) as executor:
+            futures = {
+                executor.submit(download_item, file_idx, key, size): file_idx
+                for file_idx, (key, size) in enumerate(selected)
+            }
+            for future in as_completed(futures):
+                file_idx = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    key, _ = selected[file_idx]
+                    result = (
+                        False,
+                        source_download_dir / Path(key),
+                        False,
+                        0,
+                        f"Download worker error for s3://{bucket}/{key}: {exc}",
+                    )
+                download_results[file_idx] = result
+                ok, _, _, downloaded_bytes, message = result
+                print(message)
+                if ok:
+                    total_downloaded_bytes += downloaded_bytes
+
         stop_all_sources = False
         accepted_source_files = 0
         for file_idx, (key, size) in enumerate(selected):
@@ -375,24 +420,13 @@ def main(config: DictConfig):
                 break
 
             src_name = Path(key).name
-            # Keep full key-relative path to avoid basename collisions.
-            local_src = source_download_dir / Path(key)
-            local_src.parent.mkdir(parents=True, exist_ok=True)
-            downloaded_now = False
-
-            if not local_src.exists() or local_src.stat().st_size != size:
-                print(f"Downloading [{file_idx + 1}/{len(selected)}]: {src_name}")
-                try:
-                    s3.download_file(bucket, key, str(local_src))
-                    total_downloaded_bytes += size
-                    downloaded_now = True
-                except Exception as exc:
-                    print(
-                        f"Skip file due to download error: s3://{bucket}/{key} ({exc})"
-                    )
-                    continue
-            else:
-                print(f"Already downloaded: {src_name}")
+            result = download_results.get(file_idx)
+            if result is None:
+                print(f"Skip file due to missing download result: s3://{bucket}/{key}")
+                continue
+            ok, local_src, downloaded_now, _, _ = result
+            if not ok:
+                continue
 
             file_duration = _probe_duration_seconds(local_src)
             if file_duration is None and (

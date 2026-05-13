@@ -16,6 +16,7 @@ from audio_saver import (
 from bs4 import BeautifulSoup
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
+from parallel_utils import iter_threaded
 from tqdm import tqdm
 
 BASE_URL_DEFAULT = (
@@ -122,8 +123,9 @@ def main(cfg: DictConfig):
 
     base_url = str(voices_cfg.get("base_url", BASE_URL_DEFAULT)).rstrip("/") + "/"
     include_dirs = list(voices_cfg.get("include_dirs", []) or [])
+    download_workers = max(1, int(voices_cfg.get("download_workers", 1)))
 
-    sr_target = dl["raw_sample_rate"]
+    sr_target = None
     chunk_sec = float(dl["raw_segment_duration"])
     min_sample_rate = resolve_min_sample_rate(
         raw_sample_rate=dl.get("raw_sample_rate"),
@@ -138,68 +140,69 @@ def main(cfg: DictConfig):
     total_seconds = [0.0]
     processed = 0
 
-    try:
-        file_urls = crawl_listing(base_url, include_dirs=include_dirs)
+    def download_and_process(url: str) -> tuple[bool, float, str]:
+        rel = url.replace(base_url, "")
+        local_tmp = tmp_dir / rel
+        try:
+            stream_download(url, local_tmp)
+        except Exception as e:
+            return False, 0.0, f"skip download {url}: {e}"
 
-        for url in tqdm(
-            file_urls,
-            desc="Downloading & processing Voices in the Sea",
-            unit="file",
-        ):
-            # local mirror path under tmp
-            rel = url.replace(base_url, "")
-            local_tmp = tmp_dir / rel
-            try:
-                stream_download(url, local_tmp)
-            except Exception as e:
-                print(f"skip download {url}: {e}")
-                continue
+        stem = sanitize_stem(
+            f"voices_{Path(rel).with_suffix('').as_posix().replace('/', '_')}"
+        )
+        seconds = [0.0]
 
-            # output stem is normalized relative path
-            stem = sanitize_stem(
-                f"voices_{Path(rel).with_suffix('').as_posix().replace('/', '_')}"
-            )
-
-            try:
-                # WAV/FLAC -> memory-safe processing
-                if local_tmp.suffix.lower() in [ext.lower() for ext in AUDIO_WAVLIKE]:
-                    process_large_audio(
-                        src_path=local_tmp,
-                        out_dir=audio_dir,
-                        stem_base=stem,
-                        total_seconds_ref=total_seconds,
-                        sr_target=sr_target,
-                        chunk_sec=chunk_sec,
-                        min_sample_rate=min_sample_rate,
-                    )
-                else:
-                    # MP3/OGG: decode to array (libsndfile often handles OGG; MP3 -> librosa)
-                    try:
-                        # First try soundfile (works for many OGGs)
-                        data, sr = sf.read(local_tmp, always_2d=False)
-                    except Exception:
-                        # Fallback for MP3/anything else via librosa/audioread
-                        data, sr = librosa.load(local_tmp, sr=None, mono=True)
-                    process_array_audio(
-                        data=data,
-                        sr=int(sr),
-                        out_dir=audio_dir,
-                        stem_base=stem,
-                        total_seconds_ref=total_seconds,
-                        sr_target=sr_target,
-                        chunk_sec=chunk_sec,
-                        min_sample_rate=min_sample_rate,
-                    )
-
-                processed += 1
-            except Exception as e:
-                print(f"error processing {rel}: {e}")
-
-            # remove tmp file after processing
+        try:
+            if local_tmp.suffix.lower() in [ext.lower() for ext in AUDIO_WAVLIKE]:
+                process_large_audio(
+                    src_path=local_tmp,
+                    out_dir=audio_dir,
+                    stem_base=stem,
+                    total_seconds_ref=seconds,
+                    sr_target=sr_target,
+                    chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
+                )
+            else:
+                try:
+                    data, sr = sf.read(local_tmp, always_2d=False)
+                except Exception:
+                    data, sr = librosa.load(local_tmp, sr=None, mono=True)
+                process_array_audio(
+                    data=data,
+                    sr=int(sr),
+                    out_dir=audio_dir,
+                    stem_base=stem,
+                    total_seconds_ref=seconds,
+                    sr_target=sr_target,
+                    chunk_sec=chunk_sec,
+                    min_sample_rate=min_sample_rate,
+                )
+        except Exception as e:
+            return False, 0.0, f"error processing {rel}: {e}"
+        finally:
             try:
                 local_tmp.unlink(missing_ok=True)
             except Exception:
                 pass
+
+        return True, seconds[0], ""
+
+    try:
+        file_urls = crawl_listing(base_url, include_dirs=include_dirs)
+
+        print(f"Download workers: {download_workers}")
+        for ok, seconds, message in tqdm(
+            iter_threaded(download_and_process, file_urls, download_workers),
+            desc="Downloading & processing Voices in the Sea",
+            unit="file",
+        ):
+            if message:
+                print(message)
+            if ok:
+                total_seconds[0] += seconds
+                processed += 1
 
         manifest_entries = write_manifest(
             audio_dir=audio_dir,

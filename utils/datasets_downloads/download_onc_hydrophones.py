@@ -39,6 +39,7 @@ Example (in configs/data_loading/data_loading.yaml, under the nested ``sources``
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Set
@@ -163,6 +164,7 @@ def main(cfg: DictConfig) -> None:
 
     delete_source_after = bool(onc_cfg.get("delete_downloaded_after", True))
     progress_every = int(onc_cfg.get("progress_every", 50))
+    download_workers = max(1, int(onc_cfg.get("download_workers", 1)))
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
@@ -185,6 +187,7 @@ def main(cfg: DictConfig) -> None:
 
     total_seconds: List[float] = [0.0]
     processed = 0
+    print(f"Download workers: {download_workers}")
 
     for target in targets:
         t_plain = _to_plain(target)
@@ -233,11 +236,10 @@ def main(cfg: DictConfig) -> None:
             "split_subfolder": sub_name,
         }
 
-        pbar = tqdm(total=len(files), desc=f"ONC {key_desc}")
-        for fname in files:
-            local_path: Optional[Path] = None
+        def download_file(fname: str) -> tuple[bool, str, Optional[Path], str]:
             try:
-                onc.downloadArchivefile(fname, overwrite=False)
+                worker_onc = ONC(token, outPath=str(tmp_dir))
+                worker_onc.downloadArchivefile(fname, overwrite=False)
                 local_path = tmp_dir / fname
                 if not local_path.exists():
                     hits = list(tmp_dir.rglob(Path(fname).name))
@@ -245,6 +247,38 @@ def main(cfg: DictConfig) -> None:
                         local_path = hits[0]
                 if local_path is None or not local_path.exists():
                     raise FileNotFoundError(f"downloaded file not found: {fname}")
+                return True, fname, local_path, ""
+            except Exception as e:
+                return False, fname, None, f"error downloading {fname}: {e}"
+
+        download_results: Dict[str, tuple[bool, Optional[Path], str]] = {}
+        with ThreadPoolExecutor(max_workers=download_workers) as executor:
+            futures = {
+                executor.submit(download_file, str(fname)): str(fname)
+                for fname in files
+            }
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"Downloading ONC {key_desc}",
+            ):
+                ok, fname, local_path, message = future.result()
+                download_results[fname] = (ok, local_path, message)
+                if message:
+                    print(message)
+
+        pbar = tqdm(total=len(files), desc=f"ONC {key_desc}")
+        for fname in files:
+            local_path: Optional[Path] = None
+            try:
+                ok, local_path, message = download_results.get(
+                    str(fname), (False, None, f"missing download result: {fname}")
+                )
+                if not ok or local_path is None:
+                    if message:
+                        print(message)
+                    pbar.update(1)
+                    continue
 
                 stem_base = f"onc_{sanitize_stem(local_path.stem)}"
                 before = _wav_paths_snapshot(audio_dir)

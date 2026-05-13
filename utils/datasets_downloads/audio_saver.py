@@ -43,6 +43,16 @@ def resolve_min_sample_rate(
     return int(raw_sample_rate)
 
 
+def resolve_target_sample_rate(raw_sample_rate: Any) -> Optional[int]:
+    if raw_sample_rate is None or str(raw_sample_rate).strip().lower() in {
+        "none",
+        "null",
+        "",
+    }:
+        return None
+    return int(raw_sample_rate)
+
+
 def _should_skip_sample_rate(sr: int, min_sample_rate: Optional[int], label: str) -> bool:
     if min_sample_rate is None or sr >= min_sample_rate:
         return False
@@ -56,7 +66,7 @@ def process_array_audio(
     out_dir: Path,
     stem_base: str,
     total_seconds_ref: Optional[List[float]],
-    sr_target: int,
+    sr_target: Optional[int],
     chunk_sec: float,
     min_sample_rate: Optional[int] = None,
 ) -> None:
@@ -70,9 +80,10 @@ def process_array_audio(
         return
 
     data = to_mono(data).astype("float32", copy=False)
-    # if sr != sr_target:
-    #     data = librosa.resample(data, orig_sr=sr, target_sr=sr_target)
-    #     sr = sr_target
+    sr_target = resolve_target_sample_rate(sr_target)
+    if sr_target is not None and sr != sr_target:
+        data = librosa.resample(data, orig_sr=sr, target_sr=sr_target)
+        sr = sr_target
 
     duration = len(data) / sr
     if chunk_sec == -1 or duration <= chunk_sec:
@@ -100,7 +111,7 @@ def process_large_audio(
     out_dir: Path,
     stem_base: str,
     total_seconds_ref: Optional[List[float]],
-    sr_target: int,
+    sr_target: Optional[int],
     chunk_sec: float,
     stream_block_sec: float = 30.0,
     min_sample_rate: Optional[int] = None,
@@ -112,6 +123,7 @@ def process_large_audio(
       - если SR отличается — ресемплит блоки на лету,
       - сохраняет кусками длиной chunk_sec.
     """
+    sr_target = resolve_target_sample_rate(sr_target)
     with sf.SoundFile(str(src_path), mode="r") as f:
         orig_sr = f.samplerate
         n_frames = f.frames
@@ -122,12 +134,11 @@ def process_large_audio(
         if chunk_sec == -1 or n_frames / orig_sr <= chunk_sec:
             data = f.read(frames=n_frames, dtype="float32", always_2d=False)
             data = to_mono(data)
-            # if orig_sr != sr_target:
-            #     data = librosa.resample(data, orig_sr=orig_sr, target_sr=sr_target)
-            #     out_sr = sr_target
-            # else:
-            #     out_sr = orig_sr
-            out_sr = orig_sr
+            if sr_target is not None and orig_sr != sr_target:
+                data = librosa.resample(data, orig_sr=orig_sr, target_sr=sr_target)
+                out_sr = sr_target
+            else:
+                out_sr = orig_sr
             out_path = out_dir / f"{stem_base}.wav"
             write_wav(out_path, data, out_sr)
             if total_seconds_ref is not None:
@@ -135,7 +146,7 @@ def process_large_audio(
             return
 
         out_idx = 0
-        if orig_sr == sr_target:
+        if sr_target is None or orig_sr == sr_target:
             # Нарезка без ресемпла
             frames_per_chunk = int(round(chunk_sec * orig_sr))
             f.seek(0)
