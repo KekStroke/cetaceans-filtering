@@ -4,3 +4,16 @@ defaults:
   - perch_training: train_perch_watkins_classifier
   - sound_event_detection: convert_annotations_to_manifest
   - sed_training: train_sed_classifier
+  - voxaboxen: voxaboxen
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+# Keep Hydra from creating timestamped outputs/YYYY-MM-DD/HH-MM-SS folders or run logs.
+# Project artifacts are written by each script to explicit paths under outputs/.
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

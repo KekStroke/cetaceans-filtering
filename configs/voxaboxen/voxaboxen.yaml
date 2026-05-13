@@ -1,0 +1,50 @@
+# Lightweight adapter for running an external Voxaboxen checkout.
+# Voxaboxen itself is not vendored into this repository.
+# Default layout expects cetaceans-filtering and voxaboxen to be sibling folders.
+
+voxaboxen_dir: "../voxaboxen"
+voxaboxen_python: "${voxaboxen.voxaboxen_dir}/.venv/Scripts/python.exe"
+beats_checkpoint: "${voxaboxen.voxaboxen_dir}/weights/BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
+
+# Input data in this repository.
+dataset_name: voxaboxen_dataset
+audio_dir: "data/voxaboxen/audio"
+audio_glob: "*.wav"
+annotations_json: "data/voxaboxen/annotations/annotations.json"
+
+# Prepared Voxaboxen-format dataset and experiment outputs.
+output_dataset_dir: "outputs/voxaboxen/datasets/${voxaboxen.dataset_name}"
+output_project_dir: "outputs/voxaboxen/projects/${voxaboxen.dataset_name}_experiment"
+
+# Label handling for binary whale-sound detection.
+# Labels in unknown_labels are treated as background/noise, not as Voxaboxen Unknown events.
+positive_labels:
+  - sound
+  - clicks
+unknown_labels:
+  - artifact
+  - artifacts
+  - Unknown
+binary_label: whale_sound
+unknown_label: Unknown
+
+# Split settings. Empty/no-annotation files are kept as background/noise.
+train_fraction: 0.8
+val_fraction: 0.1
+seed: 0
+
+# Training settings. Use 2-3 epochs for smoke tests; authors use 50 epochs.
+experiment_name: beats_binary_2ep
+n_epochs: 2
+batch_size: 4
+n_map: 51
+n_val_fit: 3
+num_workers: 0
+bidirectional: true
+exists_strategy: overwrite
+
+# Inference settings.
+inference_split: test
+detection_threshold: 0.1
+classification_threshold: 0.0
+disable_bidirectional_inference: true

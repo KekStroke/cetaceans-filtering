@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 
 
 def _build_event_index(
@@ -18,9 +19,13 @@ def _build_event_index(
     for _, row in ann.iterrows():
         if str(row.get("label", "")).lower().strip() == target_label:
             audio = str(row["audio"])
-            events.setdefault(audio, []).append(
-                (float(row["start_s"]), float(row["end_s"]))
-            )
+            event = (float(row["start_s"]), float(row["end_s"]))
+            keys = {audio}
+            basename = Path(audio.replace("\\", "/")).name
+            if basename:
+                keys.add(basename)
+            for key in keys:
+                events.setdefault(key, []).append(event)
     for k in events:
         events[k].sort()
     return events
