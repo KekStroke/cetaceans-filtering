@@ -97,9 +97,13 @@ def _is_audio_object(name: str) -> bool:
     return ext in {".wav", ".flac", ".aif", ".aiff", ".mp3"}
 
 
-def _source_name_from_prefix(prefix: str) -> str:
-    first_part = _normalize_prefix(prefix).split("/", 1)[0]
-    return sanitize_stem(first_part or "unknown")
+def _source_dir_from_prefix(out_dir: Path, prefix: str) -> Path:
+    parts = [
+        sanitize_stem(part) for part in _normalize_prefix(prefix).split("/") if part
+    ]
+    if not parts:
+        parts = ["unknown"]
+    return out_dir.joinpath(*parts)
 
 
 def _processed_audio_exists(processed_dir: Path, stem: str) -> bool:
@@ -261,18 +265,17 @@ def main(config: DictConfig):
         if not prefix.endswith("/"):
             prefix = prefix + "/"
 
-        source_name = _source_name_from_prefix(prefix)
-        source_dir = out_dir / source_name
+        source_dir = _source_dir_from_prefix(out_dir=out_dir, prefix=prefix)
         source_audio_dir = source_dir / "audio"
         source_downloads_dir = source_dir / "downloads"
         manifest_path = source_dir / "manifest.jsonl"
 
         dep_name = sanitize_stem(Path(prefix.rstrip("/")).name)
-        dep_download_dir = source_downloads_dir / dep_name
+        dep_download_dir = source_downloads_dir
         dep_download_dir.mkdir(parents=True, exist_ok=True)
         source_audio_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"\n=== {source_name}/{dep_name} ===")
+        print(f"\n=== {source_dir.relative_to(out_dir)} ===")
         print(f"Listing objects under: {prefix}")
         objects = _list_objects(bucket=bucket, prefix=prefix)
         audio_files = [o for o in objects if _is_audio_object(str(o.get("name", "")))]
