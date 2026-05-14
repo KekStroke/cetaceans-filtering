@@ -115,6 +115,11 @@ def _estimated_file_hours(tier: str) -> float:
     raise ValueError("tier must be one of: '256khz', '16khz', '2khz'")
 
 
+def _audio_subdir(out_dir: Path, tier: str, bucket: str, key: str) -> Path:
+    year, month = _object_year_month(tier=tier, bucket=bucket, key=key)
+    return out_dir / f"{year:04d}" / month / "audio"
+
+
 def _select_hours_per_month(
     pairs: Iterable[PacificObject],
     tier: str,
@@ -159,10 +164,8 @@ def main(cfg: DictConfig):
     pacific_cfg = dl["sources"]["pacific_sound"]
     out_root = Path(dl["raw_datasets_path"])
     out_dir = out_root / str(pacific_cfg.get("output_dir_name", "pacific_sound"))
-    audio_dir = out_dir / "audio"
     manifest_path = out_dir / "manifest.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
-    audio_dir.mkdir(parents=True, exist_ok=True)
 
     tier = str(pacific_cfg.get("tier", "256khz")).lower()
     years = [
@@ -222,12 +225,18 @@ def main(cfg: DictConfig):
 
         stem_bits = [bucket, Path(key).with_suffix("").as_posix().replace("/", "_")]
         rel_stem = sanitize_stem("_".join(stem_bits))
+        out_audio_dir = _audio_subdir(
+            out_dir=out_dir,
+            tier=tier,
+            bucket=bucket,
+            key=key,
+        )
         seconds = [0.0]
 
         try:
             process_large_audio(
                 src_path=local_tmp,
-                out_dir=audio_dir,
+                out_dir=out_audio_dir,
                 stem_base=rel_stem,
                 total_seconds_ref=seconds,
                 sr_target=sr_target,
@@ -264,7 +273,21 @@ def main(cfg: DictConfig):
         except Exception:
             pass
 
-    manifest_entries = write_manifest(audio_dir=audio_dir, manifest_path=manifest_path)
+    month_dirs = sorted(
+        {
+            _audio_subdir(out_dir=out_dir, tier=tier, bucket=bucket, key=key).parent
+            for bucket, key in pairs
+        }
+    )
+    for month_dir in month_dirs:
+        entries = write_manifest(
+            audio_dir=month_dir / "audio",
+            manifest_path=month_dir / "manifest.jsonl",
+        )
+        month_manifest_path = month_dir / "manifest.jsonl"
+        print(f"Manifest entries: {entries} ({month_manifest_path.resolve()})")
+
+    manifest_entries = write_manifest(audio_dir=out_dir, manifest_path=manifest_path)
     print(f"Manifest entries: {manifest_entries} ({manifest_path.resolve()})")
 
     print("\nFinished")

@@ -51,7 +51,7 @@ def write_manifest(
     extra_fields: Mapping[str, Any] | None = None,
 ) -> int:
     entries: list[ManifestRecord] = []
-    for audio_path in sorted(audio_dir.glob("*.wav")):
+    for audio_path in sorted(audio_dir.rglob("*.wav")):
         row = build_manifest_record(
             audio_path=audio_path,
             manifest_path=manifest_path,
