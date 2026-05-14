@@ -293,7 +293,7 @@ def main(cfg: DictConfig):
     print("\nFinished")
     print(f"Processed source files: {processed}")
     print(f"Total duration (output WAVs): {total_seconds[0] / 3600:.2f} h")
-    print(f"Audio dir: {audio_dir.resolve()}")
+    print(f"Dataset dir: {out_dir.resolve()}")
 
 
 if __name__ == "__main__":
