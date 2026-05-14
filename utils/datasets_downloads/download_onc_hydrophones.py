@@ -39,16 +39,16 @@ Example (in configs/data_loading/data_loading.yaml, under the nested ``sources``
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Set
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional
 
 import hydra
 from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_stem
 from manifest_utils import append_manifest_records
 from omegaconf import DictConfig, OmegaConf
 from onc import ONC
+from parallel_utils import iter_threaded
 from tqdm import tqdm
 
 
@@ -133,10 +133,15 @@ def _build_archive_params(
     return dict(merged)
 
 
-def _wav_paths_snapshot(dir_path: Path) -> Set[Path]:
-    if not dir_path.is_dir():
-        return set()
-    return set(dir_path.glob("*.wav"))
+def _processed_audio_outputs(processed_dir: Path, stem: str) -> List[Path]:
+    direct = processed_dir / f"{stem}.wav"
+    outputs: List[Path] = []
+    if direct.exists():
+        outputs.append(direct)
+    outputs.extend(
+        sorted(processed_dir.glob(f"{stem}_[0-9][0-9][0-9][0-9][0-9].wav"))
+    )
+    return sorted(set(outputs))
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
@@ -236,7 +241,8 @@ def main(cfg: DictConfig) -> None:
             "split_subfolder": sub_name,
         }
 
-        def download_file(fname: str) -> tuple[bool, str, Optional[Path], str]:
+        def download_and_process(fname: str):
+            local_path: Optional[Path] = None
             try:
                 worker_onc = ONC(token, outPath=str(tmp_dir))
                 worker_onc.downloadArchivefile(fname, overwrite=False)
@@ -247,64 +253,24 @@ def main(cfg: DictConfig) -> None:
                         local_path = hits[0]
                 if local_path is None or not local_path.exists():
                     raise FileNotFoundError(f"downloaded file not found: {fname}")
-                return True, fname, local_path, ""
-            except Exception as e:
-                return False, fname, None, f"error downloading {fname}: {e}"
-
-        download_results: Dict[str, tuple[bool, Optional[Path], str]] = {}
-        with ThreadPoolExecutor(max_workers=download_workers) as executor:
-            futures = {
-                executor.submit(download_file, str(fname)): str(fname)
-                for fname in files
-            }
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc=f"Downloading ONC {key_desc}",
-            ):
-                ok, fname, local_path, message = future.result()
-                download_results[fname] = (ok, local_path, message)
-                if message:
-                    print(message)
-
-        pbar = tqdm(total=len(files), desc=f"ONC {key_desc}")
-        for fname in files:
-            local_path: Optional[Path] = None
-            try:
-                ok, local_path, message = download_results.get(
-                    str(fname), (False, None, f"missing download result: {fname}")
-                )
-                if not ok or local_path is None:
-                    if message:
-                        print(message)
-                    pbar.update(1)
-                    continue
 
                 stem_base = f"onc_{sanitize_stem(local_path.stem)}"
-                before = _wav_paths_snapshot(audio_dir)
+                before = set(_processed_audio_outputs(audio_dir, stem_base))
+                seconds_ref = [0.0]
                 process_large_audio(
                     src_path=local_path,
                     out_dir=audio_dir,
                     stem_base=stem_base,
-                    total_seconds_ref=total_seconds,
+                    total_seconds_ref=seconds_ref,
                     sr_target=sr_target,
                     chunk_sec=chunk_sec,
                     min_sample_rate=min_sample_rate,
                 )
-                after = _wav_paths_snapshot(audio_dir)
-                new_wavs = sorted(after - before, key=lambda p: str(p))
-                if new_wavs:
-                    append_manifest_records(
-                        manifest_path=manifest_path,
-                        audio_paths=new_wavs,
-                        extra_fields={
-                            **base_record,
-                            "archive_file": fname,
-                        },
-                    )
-                processed += 1
+                after = set(_processed_audio_outputs(audio_dir, stem_base))
+                output_wavs = sorted(after - before, key=lambda p: str(p))
+                return True, fname, output_wavs, seconds_ref[0], ""
             except Exception as e:
-                print(f"error processing {fname}: {e}")
+                return False, fname, [], 0.0, f"error processing {fname}: {e}"
             finally:
                 if delete_source_after and local_path is not None:
                     try:
@@ -312,10 +278,29 @@ def main(cfg: DictConfig) -> None:
                     except OSError:
                         pass
 
-            pbar.update(1)
-            if processed % progress_every == 0:
-                pbar.set_postfix_str(f"total {total_seconds[0] / 3600:.2f} h")
+        pbar = tqdm(total=len(files), desc=f"ONC {key_desc}")
+        for ok, fname, new_wavs, seconds, message in iter_threaded(
+            download_and_process,
+            [str(fname) for fname in files],
+            download_workers,
+        ):
+            if message:
+                print(message)
+            if ok and new_wavs:
+                append_manifest_records(
+                    manifest_path=manifest_path,
+                    audio_paths=new_wavs,
+                    extra_fields={
+                        **base_record,
+                        "archive_file": fname,
+                    },
+                )
+                total_seconds[0] += seconds
+                processed += 1
 
+            pbar.update(1)
+            if processed > 0 and processed % progress_every == 0:
+                pbar.set_postfix_str(f"total {total_seconds[0] / 3600:.2f} h")
         pbar.close()
 
     print("\nFinished")
