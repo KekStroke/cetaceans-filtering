@@ -111,6 +111,8 @@ sources:
     output_dir_name: pacific_sound
     tier: 256khz # 256khz, 16khz, 2khz
     download_workers: 4
+    hours_per_month: 50 # null means all files; files are ~10 min each
+    random_seed: 42
     years: [2016, 2017, 2023] # starting from 2015
     months: ["11", "12"] # null means all months
 

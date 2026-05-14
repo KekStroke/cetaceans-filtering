@@ -1,3 +1,4 @@
+import random
 import shutil
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
@@ -13,6 +14,7 @@ from parallel_utils import iter_threaded
 from tqdm import tqdm
 
 AUDIO_EXTS = (".wav", ".WAV")
+PacificObject = Tuple[str, str]
 
 
 def _norm_months(months: Sequence[Union[int, str]]) -> List[str]:
@@ -28,7 +30,7 @@ def _norm_months(months: Sequence[Union[int, str]]) -> List[str]:
 
 def list_256khz_keys(
     s3, years: Sequence[int], months: Optional[Sequence[Union[int, str]]] = None
-) -> Iterable[Tuple[str, str]]:
+) -> Iterable[PacificObject]:
     """
     Yield (bucket, key) for 256 kHz archive:
       bucket = pacific-sound-256khz-YYYY
@@ -51,7 +53,7 @@ def list_decimated_keys(
     tier: str,
     years: Sequence[int],
     months: Optional[Sequence[Union[int, str]]] = None,
-) -> Iterable[Tuple[str, str]]:
+) -> Iterable[PacificObject]:
     """
     Yield (bucket, key) for decimated archives:
       tier '16khz' -> bucket 'pacific-sound-16khz'
@@ -78,7 +80,7 @@ def iter_pacific_sound_objects(
     tier: str,
     years: Sequence[int],
     months: Optional[Sequence[Union[int, str]]] = None,
-) -> Iterable[Tuple[str, str]]:
+) -> Iterable[PacificObject]:
     if tier.lower() == "256khz":
         yield from list_256khz_keys(s3, years=years, months=months)
     elif tier.lower() in {"16khz", "2khz"}:
@@ -91,6 +93,64 @@ def _config_list(value, default: Optional[Sequence] = None) -> Optional[List]:
     if value is None or str(value).strip().lower() in {"none", "null", ""}:
         return None if default is None else list(default)
     return list(value)
+
+
+def _object_year_month(tier: str, bucket: str, key: str) -> Tuple[int, str]:
+    if tier == "256khz":
+        year = int(bucket.rsplit("-", 1)[-1])
+        month = key.split("/", 1)[0].zfill(2)
+        return year, month
+
+    parts = key.split("/", 2)
+    if len(parts) < 2:
+        raise ValueError(f"cannot parse year/month from Pacific Sound key: {key}")
+    return int(parts[0]), parts[1].zfill(2)
+
+
+def _estimated_file_hours(tier: str) -> float:
+    if tier == "256khz":
+        return 10.0 / 60.0
+    if tier in {"16khz", "2khz"}:
+        return 24.0
+    raise ValueError("tier must be one of: '256khz', '16khz', '2khz'")
+
+
+def _select_hours_per_month(
+    pairs: Iterable[PacificObject],
+    tier: str,
+    hours_per_month: Optional[float],
+    seed: int,
+) -> List[PacificObject]:
+    grouped: dict[Tuple[int, str], List[PacificObject]] = {}
+    for bucket, key in pairs:
+        grouped.setdefault(
+            _object_year_month(tier=tier, bucket=bucket, key=key), []
+        ).append(
+            (
+                bucket,
+                key,
+            )
+        )
+
+    selected: List[PacificObject] = []
+    file_hours = _estimated_file_hours(tier)
+    for idx, ym in enumerate(sorted(grouped)):
+        month_pairs = grouped[ym]
+        if hours_per_month is None:
+            chosen = sorted(month_pairs)
+        else:
+            n_files = max(1, round(float(hours_per_month) / file_hours))
+            rng = random.Random(seed + idx)
+            chosen = list(month_pairs)
+            rng.shuffle(chosen)
+            chosen = sorted(chosen[: min(n_files, len(chosen))])
+        selected.extend(chosen)
+        approx_hours = len(chosen) * file_hours
+        print(
+            f"Selected {len(chosen)}/{len(month_pairs)} files for "
+            f"{ym[0]}-{ym[1]} (~{approx_hours:.1f} h)"
+        )
+    return selected
 
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
@@ -117,6 +177,14 @@ def main(cfg: DictConfig):
             "data_loading.sources.pacific_sound.years must contain at least one year"
         )
     months = _config_list(pacific_cfg.get("months"))
+    hours_per_month_cfg = pacific_cfg.get("hours_per_month")
+    hours_per_month = (
+        None
+        if hours_per_month_cfg is None
+        or str(hours_per_month_cfg).strip().lower() in {"none", "null", ""}
+        else float(hours_per_month_cfg)
+    )
+    random_seed = int(pacific_cfg.get("random_seed", 42))
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
@@ -128,8 +196,12 @@ def main(cfg: DictConfig):
 
     s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
 
-    # build iterator of (bucket, key)
-    pairs = iter_pacific_sound_objects(s3, tier=tier, years=years, months=months)
+    pairs = _select_hours_per_month(
+        pairs=iter_pacific_sound_objects(s3, tier=tier, years=years, months=months),
+        tier=tier,
+        hours_per_month=hours_per_month,
+        seed=random_seed,
+    )
 
     total_seconds = [0.0]
     processed = 0
@@ -138,7 +210,7 @@ def main(cfg: DictConfig):
     tmp_dir = out_root / "_tmp" / f"pacific-sound-{tier}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    def download_and_process(pair: Tuple[str, str]) -> tuple[bool, float, str]:
+    def download_and_process(pair: PacificObject) -> tuple[bool, float, str]:
         bucket, key = pair
         local_tmp = tmp_dir / bucket / key
         local_tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +249,7 @@ def main(cfg: DictConfig):
         for ok, seconds, message in tqdm(
             iter_threaded(download_and_process, pairs, download_workers),
             desc=f"Downloading & processing pacific-sound-{tier}",
+            total=len(pairs),
         ):
             if message:
                 print(message)
