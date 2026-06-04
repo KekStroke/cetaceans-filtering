@@ -1,8 +1,8 @@
 # Download configuration
 raw_datasets_path: data
-raw_segment_duration: -1 # sec
-raw_sample_rate: None
-raw_skip_below_sample_rate: false
+raw_segment_duration: 10 # -1 # sec
+raw_sample_rate: 8000
+raw_skip_below_sample_rate: true
 
 sources:
   # Used by utils/datasets_downloads/download_noaa_onms.py
@@ -12,8 +12,8 @@ sources:
     hours_per_deployment: 1000000
     only_new_files: true
     delete_downloaded_after_processing: true
-    max_files_per_deployment: null
-    download_workers: 4
+    max_files_per_deployment: 20
+    download_workers: 8
     random_seed: 42
     assume_sample_rate_hz: 48000
     sample_bits: 16
@@ -25,26 +25,45 @@ sources:
       # - nefsc/
       # - afsc/
       # - sanctsound/
+      # dclde 
+      # - dclde/2022/dclde_2022_1705
+      # - dclde/2022/dclde_2022_1706
+      # - dclde/2018/audio/dclde_2018_gofmx-dt_08_141006_hf
+      # - dclde/2018/audio/dclde_2018_gofmx-dt_08_141007_hf
+      # - dclde/2018/audio/dclde_2018_gofmx-dt_08_150217_hf
+      # - dclde/2018/audio/dclde_2018_gofmx-dt_08_150218_hf
+      # - dclde/2018/audio/dclde_2018_gofmx-dt_08_150219_hf
+      # - dclde/2018/audio/dclde_2018_hat-a_02_121021_lf
+      # - dclde/2018/audio/dclde_2018_hat-a_02_130421_lf
+      # - dclde/2018/audio/dclde_2018_hat-a_03_130909_lf
+      # - dclde/2018/audio/dclde_2018_hat-a_04_140519_hf
+      # - dclde/2015/audio/dclde_2015_cinms-b_17_1_hf
+      # - dclde/2015/audio/dclde_2015_cinms-b_17_winter_lf
+      # - dclde/2015/audio/dclde_2015_cinms-b_18_2_hf
+      # - dclde/2015/audio/dclde_2015_cinms-b_18_spring_lf
+      # - dclde/2015/audio/dclde_2015_cinms-b_18_summer_lf
+      # - dclde/2015/audio/dclde_2015_cinms-b_19_fall_lf
+      # - dclde/2015/audio/dclde_2015_cinms-c_18_1_hf
       # SanctSound SB01
-      - sanctsound/audio/sb01/sanctsound_sb01_01
-      - sanctsound/audio/sb01/sanctsound_sb01_02
-      - sanctsound/audio/sb01/sanctsound_sb01_03
-      - sanctsound/audio/sb01/sanctsound_sb01_06
+      # - sanctsound/audio/sb01/sanctsound_sb01_01
+      # - sanctsound/audio/sb01/sanctsound_sb01_02
+      # - sanctsound/audio/sb01/sanctsound_sb01_03
+      # - sanctsound/audio/sb01/sanctsound_sb01_06
       - sanctsound/audio/sb01/sanctsound_sb01_07
       - sanctsound/audio/sb01/sanctsound_sb01_08
-      - sanctsound/audio/sb01/sanctsound_sb01_09
-      - sanctsound/audio/sb01/sanctsound_sb01_10
-      - sanctsound/audio/sb01/sanctsound_sb01_11
-      - sanctsound/audio/sb01/sanctsound_sb01_12
-      - sanctsound/audio/sb01/sanctsound_sb01_13
-      - sanctsound/audio/sb01/sanctsound_sb01_14
-      - sanctsound/audio/sb01/sanctsound_sb01_15
-      - sanctsound/audio/sb01/sanctsound_sb01_16
-      - sanctsound/audio/sb01/sanctsound_sb01_17
-      - sanctsound/audio/sb01/sanctsound_sb01_18
-      - sanctsound/audio/sb01/sanctsound_sb01_19
-      - sanctsound/audio/sb01/sanctsound_sb01_20
-      - sanctsound/audio/sb01/sanctsound_sb01_21
+      # - sanctsound/audio/sb01/sanctsound_sb01_09
+      # - sanctsound/audio/sb01/sanctsound_sb01_10
+      # - sanctsound/audio/sb01/sanctsound_sb01_11
+      # - sanctsound/audio/sb01/sanctsound_sb01_12
+      # - sanctsound/audio/sb01/sanctsound_sb01_13
+      # - sanctsound/audio/sb01/sanctsound_sb01_14
+      # - sanctsound/audio/sb01/sanctsound_sb01_15
+      # - sanctsound/audio/sb01/sanctsound_sb01_16
+      # - sanctsound/audio/sb01/sanctsound_sb01_17
+      # - sanctsound/audio/sb01/sanctsound_sb01_18
+      # - sanctsound/audio/sb01/sanctsound_sb01_19
+      # - sanctsound/audio/sb01/sanctsound_sb01_20
+      # - sanctsound/audio/sb01/sanctsound_sb01_21
       # SanctSound SB02
       - sanctsound/audio/sb02/sanctsound_sb02_01
       - sanctsound/audio/sb02/sanctsound_sb02_02
@@ -52,19 +71,19 @@ sources:
       - sanctsound/audio/sb02/sanctsound_sb02_06
       - sanctsound/audio/sb02/sanctsound_sb02_07
       - sanctsound/audio/sb02/sanctsound_sb02_08
-      - sanctsound/audio/sb02/sanctsound_sb02_09
-      - sanctsound/audio/sb02/sanctsound_sb02_10
-      - sanctsound/audio/sb02/sanctsound_sb02_11
-      - sanctsound/audio/sb02/sanctsound_sb02_12
-      - sanctsound/audio/sb02/sanctsound_sb02_13
-      - sanctsound/audio/sb02/sanctsound_sb02_14
-      - sanctsound/audio/sb02/sanctsound_sb02_15
-      - sanctsound/audio/sb02/sanctsound_sb02_16
-      - sanctsound/audio/sb02/sanctsound_sb02_17
-      - sanctsound/audio/sb02/sanctsound_sb02_18
-      - sanctsound/audio/sb02/sanctsound_sb02_19
-      - sanctsound/audio/sb02/sanctsound_sb02_20
-      - sanctsound/audio/sb02/sanctsound_sb02_21
+      # - sanctsound/audio/sb02/sanctsound_sb02_09
+      # - sanctsound/audio/sb02/sanctsound_sb02_10
+      # - sanctsound/audio/sb02/sanctsound_sb02_11
+      # - sanctsound/audio/sb02/sanctsound_sb02_12
+      # - sanctsound/audio/sb02/sanctsound_sb02_13
+      # - sanctsound/audio/sb02/sanctsound_sb02_14
+      # - sanctsound/audio/sb02/sanctsound_sb02_15
+      # - sanctsound/audio/sb02/sanctsound_sb02_16
+      # - sanctsound/audio/sb02/sanctsound_sb02_17
+      # - sanctsound/audio/sb02/sanctsound_sb02_18
+      # - sanctsound/audio/sb02/sanctsound_sb02_19
+      # - sanctsound/audio/sb02/sanctsound_sb02_20
+      # - sanctsound/audio/sb02/sanctsound_sb02_21
       # Other SanctSound sites (examples)
       - sanctsound/audio/sb03/sanctsound_sb03_01
       - sanctsound/audio/sb03/sanctsound_sb03_10
@@ -84,7 +103,7 @@ sources:
     output_dir_name: orcasound
     only_new_files: true
     max_files_per_source: null
-    download_workers: 4
+    download_workers: 8
     target_hours_total: null
     assume_minutes_per_file: 5.0
     duration_min_minutes: null
@@ -109,12 +128,12 @@ sources:
   # Used by utils/datasets_downloads/download_pacific_sound.py
   pacific_sound:
     output_dir_name: pacific_sound
-    tier: 256khz # 256khz, 16khz, 2khz
-    download_workers: 4
+    tier: 16khz # 256khz, 16khz, 2khz
+    download_workers: 8
     hours_per_month: 50 # null means all files; files are ~10 min each
     random_seed: 42
-    years: [2016, 2017, 2023] # starting from 2015
-    months: ["11", "12"] # null means all months
+    years: [2018, 2019, 2020] # starting from 2015
+    months: ["11", "1", "9"] # null means all months
 
   # Used by utils/datasets_downloads/download_voices_in_the_sea.py
   voices_in_the_sea:
@@ -144,12 +163,59 @@ sources:
     default_archive_params: {} # optional shared camelCase filters
     extra_params: {} # optional global extras
     targets:
+      # Six 50-hour windows from real ONC HYDROPHONE archive queries.
+      # Expected raw duration before archive gaps: about 300 hours total.
       - location_code: SCVIP
-        date_from: "2021-05-01"
-        date_to: "2021-05-02"
+        date_from: "2021-05-01T00:00:00.000Z"
+        date_to: "2021-05-03T02:00:00.000Z"
         extension: flac
         include_diverted: false
-        max_files: 5
+        max_files: null
+        subfolder: null # override output folder name
+        device_category_code: null # per-target category override
+        extra_params: {} # merges into getArchivefile params
+      - location_code: FGPD
+        date_from: "2023-03-10T12:00:00.000Z"
+        date_to: "2023-03-12T14:00:00.000Z"
+        extension: flac
+        include_diverted: false
+        max_files: null
+        subfolder: null # override output folder name
+        device_category_code: null # per-target category override
+        extra_params: {} # merges into getArchivefile params
+      - location_code: KVIP
+        date_from: "2022-08-19T12:00:00.000Z"
+        date_to: "2022-08-21T14:00:00.000Z"
+        extension: flac
+        include_diverted: false
+        max_files: null
+        subfolder: null # override output folder name
+        device_category_code: null # per-target category override
+        extra_params: {} # merges into getArchivefile params
+      - location_code: CRIP
+        date_from: "2023-07-08T06:00:00.000Z"
+        date_to: "2023-07-10T08:00:00.000Z"
+        extension: flac
+        include_diverted: false
+        max_files: null
+        subfolder: null # override output folder name
+        device_category_code: null # per-target category override
+        extra_params: {} # merges into getArchivefile params
+      - location_code: DIIP
+        date_from: "2022-11-03T18:00:00.000Z"
+        date_to: "2022-11-05T20:00:00.000Z"
+        extension: flac
+        include_diverted: false
+        max_files: null
+        subfolder: null # override output folder name
+        device_category_code: null # per-target category override
+        extra_params: {} # merges into getArchivefile params
+      - location_code: BIIP
+        date_from: "2023-01-15T09:00:00.000Z"
+        date_to: "2023-01-17T11:00:00.000Z"
+        extension: flac
+        include_diverted: false
+        max_files: null
         subfolder: null # override output folder name
         device_category_code: null # per-target category override
         extra_params: {} # merges into getArchivefile params
