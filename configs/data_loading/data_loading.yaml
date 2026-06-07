@@ -19,11 +19,21 @@ sources:
     sample_bits: 16
     channels: 1
     deployment_prefixes:
-      # Most useful for SSL
-      # - dclde/
-      # - pifsc/
-      # - nefsc/
-      # - afsc/
+      # Most useful for SSL (see Marine Mammal SSL data strategy).
+      # Each prefix below is treated as ONE deployment: the downloader lists
+      # every audio object under it (recursively, audio extensions only) and
+      # then samples up to `max_files_per_deployment` files (default 20) /
+      # `hours_per_deployment` hours. To pull more, override on the CLI, e.g.
+      #   download_noaa_onms.py data_loading.sources.noaa.max_files_per_deployment=10000 \
+      #     data_loading.sources.noaa.hours_per_deployment=999
+      # Note: files below `raw_sample_rate` (8000 Hz) are skipped when
+      # `raw_skip_below_sample_rate=true`; these families are 48 kHz+ FLAC.
+      - dclde/
+      - pifsc/
+      - nefsc/
+      - afsc/
+      # sanctsound/ is already sampled per-site below; enable the line below
+      # to add every remaining SanctSound deployment in one prefix.
       # - sanctsound/
       # dclde 
       # - dclde/2022/dclde_2022_1705
