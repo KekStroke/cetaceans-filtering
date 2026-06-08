@@ -1,0 +1,15 @@
+[   0.2s] loading 10000 train + 1560 probe clips ...
+[  79.8s] train audio (10000, 16000)
+[  91.8s] probe audio (1560, 16000), 664 recordings
+[  92.5s] BestRQ params: 14.00M (trainable 14.00M)
+[ 183.2s] PROBE @ step 0 (random encoder): macro-F1 = 0.6422 (chance ≈ 0.083)
+[ 188.6s] step  100 loss=4.406 acc=0.295 tgt_ppl=99 pred_ppl=8 gn=1.20 lr=4.2e-04
+[ 193.0s] step  200 loss=4.152 acc=0.329 tgt_ppl=115 pred_ppl=15 gn=1.00 lr=5.0e-04
+[ 277.7s]    >> PROBE @ step 250: macro-F1 = 0.6517
+[ 280.3s] step  300 loss=4.057 acc=0.317 tgt_ppl=132 pred_ppl=27 gn=0.90 lr=4.9e-04
+[ 284.9s] step  400 loss=3.700 acc=0.348 tgt_ppl=107 pred_ppl=23 gn=1.02 lr=4.7e-04
+[ 289.4s] step  500 loss=3.615 acc=0.353 tgt_ppl=105 pred_ppl=24 gn=1.02 lr=4.5e-04
+[ 372.4s]    >> PROBE @ step 500: macro-F1 = 0.6904
+[ 377.4s] step  600 loss=4.052 acc=0.301 tgt_ppl=157 pred_ppl=35 gn=1.07 lr=4.2e-04
+[ 381.8s] step  700 loss=3.877 acc=0.309 tgt_ppl=133 pred_ppl=31 gn=1.19 lr=3.9e-04
+[ 426.3s]    >> PROBE @ step 750: macro-F1 = 0.6955

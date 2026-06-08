@@ -1,0 +1,98 @@
+{
+  "note": "Run interrupted by system reboot at ~step 750 (concurrent GPU jobs). Trend fully established.",
+  "steps_logged": 700,
+  "loss_init": 4.406,
+  "loss_last": 3.877,
+  "acc_last": 0.309,
+  "tgt_ppl_last": 133.0,
+  "probe_init_random": 0.6422,
+  "probe_last": [
+    750,
+    0.6955
+  ],
+  "throughput_clips_per_s": 1455.0,
+  "throughput_note": "1 clip = 1.0 s audio @16kHz on RTX 5090, 14M-param BEST-RQ, bf16, batch 64",
+  "probe_history": [
+    [
+      0,
+      0.6422
+    ],
+    [
+      250,
+      0.6517
+    ],
+    [
+      500,
+      0.6904
+    ],
+    [
+      750,
+      0.6955
+    ]
+  ],
+  "step_history": [
+    {
+      "t": 188.6,
+      "step": 100,
+      "loss": 4.406,
+      "acc": 0.295,
+      "tgt_ppl": 99.0,
+      "pred_ppl": 8.0,
+      "gn": 1.2
+    },
+    {
+      "t": 193.0,
+      "step": 200,
+      "loss": 4.152,
+      "acc": 0.329,
+      "tgt_ppl": 115.0,
+      "pred_ppl": 15.0,
+      "gn": 1.0
+    },
+    {
+      "t": 280.3,
+      "step": 300,
+      "loss": 4.057,
+      "acc": 0.317,
+      "tgt_ppl": 132.0,
+      "pred_ppl": 27.0,
+      "gn": 0.9
+    },
+    {
+      "t": 284.9,
+      "step": 400,
+      "loss": 3.7,
+      "acc": 0.348,
+      "tgt_ppl": 107.0,
+      "pred_ppl": 23.0,
+      "gn": 1.02
+    },
+    {
+      "t": 289.4,
+      "step": 500,
+      "loss": 3.615,
+      "acc": 0.353,
+      "tgt_ppl": 105.0,
+      "pred_ppl": 24.0,
+      "gn": 1.02
+    },
+    {
+      "t": 377.4,
+      "step": 600,
+      "loss": 4.052,
+      "acc": 0.301,
+      "tgt_ppl": 157.0,
+      "pred_ppl": 35.0,
+      "gn": 1.07
+    },
+    {
+      "t": 381.8,
+      "step": 700,
+      "loss": 3.877,
+      "acc": 0.309,
+      "tgt_ppl": 133.0,
+      "pred_ppl": 31.0,
+      "gn": 1.19
+    }
+  ]
+}
