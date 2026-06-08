@@ -237,3 +237,18 @@ labels = bundle["label_encoder"].inverse_transform(
     bundle["model"].predict(X)  # X: [M, 1280] numpy array
 )
 ```
+
+---
+
+## Marine Mammal SSL — progress (session summary)
+
+Work in support of the SSL pretraining effort:
+
+- **Data inventory & sufficiency** — ~3,089 h unlabeled @ 8 kHz (estimated, *unaudited* — the source table foots to ~3,359 h; needs a real manifest audit) + labeled K-class / field / Watkins. Verdict: **quality > scale**.
+- **Sample rate — 8 → 16 kHz justified** — measured **+10.2 pts** macro-F1 on Olga K-calls; returns flatten above 16 kHz.
+- **"Loss is huge" is a non-problem** — animal2vec = data2vec-2.0, whose latent-MSE is scale-free / uninterpretable; judge by **loss-trend + target-variance + grad-norm + a frozen probe**.
+- **animal2vec training speed** — #1 lever = raise the data2vec-2.0 **multimask `M`** (amortizes the EMA-teacher forward); then bf16 (not fp16), `torch.compile`/SDPA, and a sharded data pipeline.
+- **BEST-RQ reference trainer — built & validated** — no EMA teacher, **interpretable CE loss from ln(8192)=9.0** + a frozen-probe health metric; **~1455 clips/s** on a laptop RTX 5090. Drop-in for the SSL run (swap the audio loader for the corpus).
+- **Frozen-probe benchmark** — fair per-encoder best-layer: AVES **0.894** / wav2vec2 **0.875** / whisper **0.875** / log-mel 0.654 (all SSL ≫ handcrafted; last-layer probing flips conclusions).
+- **SHAP / interpretability** — attribution↔energy **r = 0.867** (K21: 52 % energy, 77 % attribution > 4 kHz) → mechanistic *why* for 16 kHz.
+- **This PR** — enable the NOAA `dclde/pifsc/nefsc/afsc` SSL prefixes.
