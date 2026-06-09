@@ -13,11 +13,12 @@
 - **Fix: bf16** — `common.bf16: true`, `common.fp16: false`. GPU has ~47 GB free (looks like A100-80) → bf16 supported, no loss-scaling, overflow gone, usually faster too.
 - (If bf16 is genuinely unavailable: at minimum `fp16_init_scale: 128`.)
 
-## 🟠 Fix #2 (SPEED — the run is ~2 months at this rate) — drop `update_freq`
-- `ups = 0.02` → **1 update / 50 s**; at `max_update: 100000` that is **~58 days**. In ~52 h it reached only **4,224** updates.
-- Effective batch = `max_tokens 408000 × update_freq 80 × clone_batch 12 × 2 GPU` = MeerKAT-scale — far larger than this marine corpus needs.
-- **Fix: cut `update_freq` 80 → 8–16** → ~5–10× more updates/hour, and the 10,000-step warmup finishes in sane wall-clock (at update 4224 the LR is still only 1.27e-5 of the 3e-5 target — 42 % through warmup).
-- Add GPUs if available (data2vec normally uses 8–16).
+## 🟠 Fix #2 (SPEED) — it's the GPU COUNT, not the batch — do NOT cut the batch
+**Correction (verified against the paper):** the large effective batch is *by design* and Anvar is already at the intended scale — do **not** cut `update_freq`.
+- The animal2vec paper used **4× A100-80GB, ~1020 s effective batch, 20 days, 315 M params** ([arXiv 2406.01253](https://arxiv.org/abs/2406.01253)).
+- Anvar's log: `misc/wpb` = 8.89e6 tokens = **~1111 s of audio/update ≈ the paper's 1020 s**. His batch is right; cutting `update_freq` would drop it *below* the reference and risk quality. *(An earlier draft of this doc suggested cutting update_freq — retracted.)*
+- It's slow because he's on **2 GPUs** while the paper used **4× A100 and still took 20 days**. SSL pretraining of a 315 M model is inherently a multi-week job; `ups = 0.02` → ~2 months at 2 GPUs is roughly expected (× the fp16 waste).
+- **Speed levers that KEEP the batch:** (1) **bf16** (Fix #1) recovers the ~49 overflow-wasted steps + is faster; (2) **more GPUs (4+, match the paper)** → cuts wall-clock, batch preserved. (3) *Only* if hardware is fixed and you accept a quality risk: a smaller model or fewer epochs — a real trade-off, not free.
 
 ## 🟠 Fix #3 — 1-GPU OOM
 - Cause: `clone_batch: 12` (12 masked copies/sample) × `max_tokens: 408000`. To fit one GPU: `clone_batch` 12 → 6–8, or `max_tokens` 408000 → ~200000 (compensate via `update_freq`). The 2-GPU workaround is fine.
@@ -33,4 +34,4 @@
 - When a checkpoint exists, run our frozen-probe on it for an independent "did it learn useful features?" read beyond the loss.
 
 ## TL;DR priority
-**1. bf16** (stability) · **2. `update_freq` 80→~12** (speed) · 3. `clone_batch`/`max_tokens` for 1-GPU · 4. 16 kHz next corpus · 5. `ema_anneal_end_step`.
+**1. bf16** (stability + recovers the overflow-wasted steps) · **2. more GPUs (4+, like the paper) — do NOT cut the batch** (it already ≈ the paper's 1020 s) · 3. `clone_batch`/`max_tokens` only for 1-GPU OOM · 4. 16 kHz next corpus · 5. `ema_anneal_end_step`. **Expect weeks, not hours** — the paper took 20 days on 4× A100.
