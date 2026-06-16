@@ -18,3 +18,7 @@ fairseq fns. Input = 10s @ 8kHz (80000) or native.
   clips vs field-passive pretraining domain; K-call-types are fine-grained.
 - **Next:** Watkins species (coarser) + sound/noise filtration (closest to pretraining) to disambiguate
   "undertrained" vs "learned-coarse-not-fine"; re-probe a later checkpoint.
+
+
+## ✅ VERDICT (see VERDICT.md): encoder works + learning
+Watkins species (fair 8kHz): **13.5k=0.378 -> 25k=0.542 (+0.164, rising)**; chance 0.03. K-class (0.24, flat) was a poor proxy (8kHz kills >4kHz orca call detail). The encoder learned transferable features and improves with training -> keep training; evaluate headline on 16kHz/species.
