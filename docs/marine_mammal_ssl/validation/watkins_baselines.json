@@ -1,0 +1,16 @@
+{
+  "AVES": {
+    "best_layer": "L4",
+    "macro_f1": 0.8847509103442041,
+    "acc": 0.8820058997050148
+  },
+  "log-mel": {
+    "macro_f1": 0.759659709275899,
+    "acc": 0.7551622418879056
+  },
+  "animal2vec_25k": {
+    "macro_f1": 0.542,
+    "acc": null,
+    "note": "8kHz, 8% trained, rising"
+  }
+}

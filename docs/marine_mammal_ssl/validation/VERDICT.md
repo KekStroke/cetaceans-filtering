@@ -1,6 +1,18 @@
 # animal2vec checkpoint validation — VERDICT (ckpt 13.5k & 25k, blue run lr=5e-5)
 
-## TL;DR: the encoder WORKS and is LEARNING. K-class was the wrong test.
+## TL;DR: the encoder is LEARNING (rising, ×17 chance) but at 25k it is UNDERTRAINED — its features are still BELOW an 8 kHz log-mel baseline. Keep training; don't expect useful features yet.
+
+### Calibration on Watkins species (same probe) — this corrects an earlier too-rosy read
+| encoder | band | macro-F1 |
+|---|---|---:|
+| AVES | 16 kHz | 0.885 |
+| AVES | 8 kHz | 0.853 |
+| log-mel | 16 kHz | 0.760 |
+| **log-mel** | **8 kHz** | **0.675** |
+| **animal2vec-25k** | **8 kHz** | **0.542** |
+| chance | | 0.032 |
+
+**8 kHz is NOT the excuse** (AVES barely drops at 8 kHz; log-mel-8k 0.675 still beats animal2vec 0.542). The gap is **undertraining**, not bandwidth — at 25k (8 %) the encoder's frozen features are worse than a trivial 8 kHz spectrogram. The **rising trend** (+0.16 per ~11.5 k updates) is the encouraging part, but it describes the *trajectory*, not current usefulness.
 
 | task | 13.5k | 25k | Δ | read |
 |---|---:|---:|---:|---|
