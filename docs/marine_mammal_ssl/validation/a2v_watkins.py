@@ -76,7 +76,14 @@ for ckpt in sys.argv[1:]:
     log(f"  {tag}: BEST {best} macro-F1={per[best]:.4f} | knn-purity {clustering['knn_purity']:.3f} NMI {clustering['nmi_kmeans']:.3f}")
     del model; torch.cuda.empty_cache()
 
-json.dump(ALL, open("/mnt/c/Users/Iaroslav/CETACEANS/a2v_validation/animal2vec_watkins.json", "w"), indent=2)
+# ACCUMULATE across runs (for the dynamics harness) — merge into the existing JSON, don't overwrite
+_jp = "/mnt/c/Users/Iaroslav/CETACEANS/a2v_validation/animal2vec_watkins.json"
+try:
+    _prev = json.load(open(_jp))
+except Exception:
+    _prev = {}
+_prev.update(ALL)
+json.dump(_prev, open(_jp, "w"), indent=2)
 print("\n=== animal2vec on WATKINS (31-way species, fair 8kHz test) ===")
 print(f"{'ckpt':22s} {'best-layer F1':>14s} {'final F1':>10s} {'knn-pur':>8s} {'NMI':>6s}")
 for tag, r in ALL.items():
