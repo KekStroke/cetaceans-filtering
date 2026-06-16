@@ -21,9 +21,15 @@ Same math, faster kernels — won't move the trajectory.
    ```yaml
    common: { fp16: false, bf16: true, amp: false }
    ```
-2. **Enable TF32** (fairseq never sets it; torch 1.13 has matmul-TF32 OFF by default) +
-   cudnn.benchmark (shapes are fixed 10 s/8 kHz). Paste `a100_speedups.py::enable()` at the top of the
-   training entrypoint. Free ~1.1–1.3× on the fp32 ops, autotuned conv frontend.
+2. **Enable TF32** (fairseq never sets it; torch 1.13 has matmul-TF32 OFF by default). Paste
+   `a100_speedups.py::enable()` at the top of the training entrypoint. Free ~1.1–1.3× on the fp32 ops,
+   no convergence change.
+   - ⚠️ **Do NOT blindly turn on `cudnn.benchmark`** here: animal2vec token-batches
+     (`max_tokens`, `required_batch_size_multiple=1`, `min_sample_size=1`) → batch shapes vary every
+     step → benchmark re-autotunes constantly (slower + extra workspace memory). It's OFF by default in
+     the snippet; only enable (`enable(fixed_shapes=True)`) if you pad to one fixed shape.
+   - On torch 1.13, `set_float32_matmul_precision` (2.x) and `PYTORCH_CUDA_ALLOC_CONF=expandable_segments`
+     (≥2.1) are **no-ops** — the snippet guards them; just don't expect a gain from them until the torch-2 port.
 3. **Loader headroom** (cheap insurance against tail stalls): `num_workers 8→16` (A100 boxes have the
    cores), `persistent_workers`, `prefetch_factor: 4`, pin_memory. Won't be the big win here (compute-bound)
    but removes the occasional stall.
