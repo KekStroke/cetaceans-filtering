@@ -95,7 +95,7 @@ out = {"ckpt": ckpt.split("/")[-1], "best_layer": int(BL), "best_f1": float(f1s[
        "attr_vs_energy_pearson": r}
 json.dump(out, open("/mnt/c/Users/Iaroslav/CETACEANS/a2v_validation/a2v_shap.json", "w"), indent=2)
 
-bl = [f"{lo/1000:.1f}-{hi/1000:.0f}k" for lo, hi in BANDS]
+bl = [f"{lo/1000:g}-{hi/1000:g}" for lo, hi in BANDS]   # kHz, exact (no rounding)
 fig, ax = plt.subplots(1, 2, figsize=(13, 5))
 im = ax[0].imshow(imp, aspect='auto', cmap='RdBu_r', vmin=-abs(imp).max(), vmax=abs(imp).max())
 ax[0].set_yticks(range(len(classes))); ax[0].set_yticklabels(classes, fontsize=7); ax[0].set_xticks(range(NB)); ax[0].set_xticklabels(bl, rotation=45, fontsize=7)
