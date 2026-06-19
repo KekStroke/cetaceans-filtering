@@ -28,8 +28,9 @@ Same math, faster kernels — won't move the trajectory.
      (`max_tokens`, `required_batch_size_multiple=1`, `min_sample_size=1`) → batch shapes vary every
      step → benchmark re-autotunes constantly (slower + extra workspace memory). It's OFF by default in
      the snippet; only enable (`enable(fixed_shapes=True)`) if you pad to one fixed shape.
-   - On torch 1.13, `set_float32_matmul_precision` (2.x) and `PYTORCH_CUDA_ALLOC_CONF=expandable_segments`
-     (≥2.1) are **no-ops** — the snippet guards them; just don't expect a gain from them until the torch-2 port.
+   - `set_float32_matmul_precision` exists since torch 1.12, so it already works on his 1.13 (it just
+     reaffirms the TF32 path). `PYTORCH_CUDA_ALLOC_CONF=expandable_segments` is the only torch-≥2.1 piece
+     (a **no-op** on 1.13) and must be a launch env var, not set mid-script — see the snippet's note.
 3. **Loader headroom** (cheap insurance against tail stalls): `num_workers 8→16` (A100 boxes have the
    cores), `persistent_workers`, `prefetch_factor: 4`, pin_memory. Won't be the big win here (compute-bound)
    but removes the occasional stall.
@@ -45,9 +46,11 @@ Expected Tier 0: **~1.2–1.4×**, zero risk to convergence.
    e.g. max_tokens 408k→816k  AND  update_freq 80→40   (wpb unchanged ≈8.89M)
    ```
    This is the **cautious-friendly throughput win** — recommend it even on the live run. Expected **~1.3–1.7×**.
+   (Effective-batch invariance is exact here because data2vec_multi has **no BatchNorm** — only LayerNorm —
+   so per-microbatch statistics don't shift the result; for a batch-stat model it would be near-, not bit-, lossless.)
 5. **Port training to torch 2.x + cu12 → `torch.compile`** (highest pure-compute lever). We already proved
-   animal2vec *loads & runs* on torch 2.9+cu128 on sm_120 via the shims in `a2v_extract.py` (torch._six
-   shim, `compute_mask_indices` monkeypatch) — that de-risks the import side. With torch 2.x:
+   animal2vec *loads & runs* on torch 2.9+cu128 on sm_120 via the shims in the validation PR's `validate.py`
+   (torch._six shim, `compute_mask_indices` monkeypatch) — that de-risks the import side. With torch 2.x:
    - `model = torch.compile(model)` on the encoder — typically **1.2–1.7×** (fuses the sinc/conv frontend +
      transformer MLPs), lossless.
    - fused AdamW (`fused=True`), better SDPA. (SDPA-flash gain is *small* here — sequences are short

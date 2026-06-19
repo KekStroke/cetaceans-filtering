@@ -21,7 +21,8 @@ def enable(fixed_shapes=False, verbose=True):
     #     a full A100). So OFF by default. Turn on ONLY if you pad to one fixed shape. ---
     torch.backends.cudnn.benchmark = bool(fixed_shapes)
 
-    # --- torch 2.x only; AttributeError on 1.13 -> guarded so the line is a no-op there. ---
+    # --- set_float32_matmul_precision exists since torch 1.12 (so it RUNS on his 1.13.1); it just
+    #     reaffirms the TF32 matmul path set above. Guarded only for very old torch. ---
     try:
         torch.set_float32_matmul_precision("high")
     except Exception:
