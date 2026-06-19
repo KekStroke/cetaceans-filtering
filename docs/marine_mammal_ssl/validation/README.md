@@ -22,6 +22,9 @@ $PY $V dynamics                                                                #
   compare runs just call `watkins`/`filter` once per checkpoint, then `dynamics`.
 - `--no-baselines` skips the AVES-8k / log-mel-8k calibration; `--limit N` caps clips for a fast smoke run.
 - Outputs (JSON + PNG) go to `$A2V_OUT` (default `./a2v_val_results`) — regenerated per run, **not** checked in.
+- **Memory:** run **one checkpoint at a time** (each loads ~1.3 GB). To sweep several, call `watkins`/`filter`
+  per checkpoint sequentially, then `dynamics` — don't run them concurrently. On a tight box wrap the loop
+  with a `free -m`/`pkill` watchdog.
 
 ## Config (env vars — point these at your data/weights)
 | var | default | meaning |

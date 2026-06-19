@@ -15,7 +15,7 @@ Env (override the defaults): A2V_REPO (~/a2v), A2V_OUT (./a2v_val_results), A2V_
 A2V_AVES. Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
   cd ~/a2v && ~/a2v_env/bin/python /path/validate.py watkins ~/a2v_ckpts/ckpt25k_slim.pt
 """
-import os, sys, glob, json, time, types, re, argparse, collections
+import os, sys, glob, json, time, types, re, argparse, collections, tempfile
 import numpy as np
 
 SR = 8000
@@ -127,7 +127,7 @@ def sanitize_and_save(src, dst):
 def load_model(ckpt):
     _setup_fairseq()
     from fairseq import checkpoint_utils
-    san = "/tmp/a2v_ckpt_sanitized.pt"
+    san = os.path.join(tempfile.gettempdir(), f"a2v_ckpt_sanitized_{os.getpid()}.pt")  # per-process: no clobber
     sanitize_and_save(ckpt, san)
     log("load_model_ensemble ...")
     models, _ = checkpoint_utils.load_model_ensemble([san])
@@ -167,8 +167,11 @@ def tape_key(p):
     parts = os.path.basename(p)[:-4].split('_'); return parts[3] if len(parts) >= 4 else os.path.basename(p)
 def gather_kclass(lab_dir, n_per_class):
     CLASSES = ['K1','K10','K12','K13','K14','K17','K21','K27','K4','K5','K7','noise']
+    files = sorted(glob.glob(f"{lab_dir}/*.wav"))
+    if not files:
+        raise SystemExit(f"no .wav files under A2V_KCLASS={lab_dir!r} — point A2V_KCLASS at your K-class clip dir")
     by = collections.defaultdict(list)
-    for f in sorted(glob.glob(f"{lab_dir}/*.wav")):
+    for f in files:
         c = class_of(os.path.basename(f))
         if c in set(CLASSES): by[c].append(f)
     rng = np.random.RandomState(42); items = []
@@ -179,13 +182,13 @@ def gather_kclass(lab_dir, n_per_class):
 
 def _clf():
     from sklearn.linear_model import LogisticRegression
-    return LogisticRegression(max_iter=2000, C=1.0, class_weight='balanced')
+    return LogisticRegression(max_iter=2000, C=1.0, class_weight='balanced', n_jobs=-1)
 def probe_cv(X, y, groups, binary=False):
     """recording-disjoint GroupKFold probe. Returns macro-F1 (+ AUC if binary)."""
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import GroupKFold
     from sklearn.metrics import f1_score, balanced_accuracy_score, roc_auc_score
-    gkf = GroupKFold(5); T_, P_, S_ = [], [], []
+    gkf = GroupKFold(min(5, len(set(groups)))); T_, P_, S_ = [], [], []
     for tr, te in gkf.split(X, y, groups):
         sc = StandardScaler().fit(X[tr]); clf = _clf().fit(sc.transform(X[tr]), y[tr])
         P_.append(clf.predict(sc.transform(X[te]))); T_.append(y[te])
@@ -282,7 +285,7 @@ def task_filter(a):
         for li, v in enumerate(fs): XL[li].append(v)
         if i % 200 == 0: log(f"  emb {i}/{len(files)}")
     XL = [np.stack(p) for p in XL]
-    per = {f"L{li}": probe_cv(X, y, groups, binary=True) for li, X in enumerate(XL)}
+    per = {("final" if li == len(XL) - 1 else f"L{li}"): probe_cv(X, y, groups, binary=True) for li, X in enumerate(XL)}
     best = max(per, key=lambda k: per[k]['macro_f1'])
     res = dict(best_layer=best, best=per[best], per_layer=per, n_signal=len(sig), n_noise=len(noi))
     if a.baselines:
@@ -336,28 +339,38 @@ def task_shap(a):
     def bandstop(w, lo, hi):
         lo = max(lo, 10) / (SR / 2); hi = min(hi, SR / 2 - 10) / (SR / 2)
         return sosfiltfilt(butter(4, [lo, hi], btype='bandstop', output='sos'), w).astype(np.float32)
+    def band_energy(w):
+        fr = np.fft.rfftfreq(len(w), 1 / SR); P = np.abs(np.fft.rfft(w)) ** 2
+        return np.array([P[(fr >= lo) & (fr < hi)].sum() for lo, hi in BANDS])
     byc = collections.defaultdict(list)
     for f, c, _ in items: byc[c].append(f)
-    imp = np.zeros((len(classes), NB)); cnt = np.zeros(len(classes))
+    imp = np.zeros((len(classes), NB)); eng = np.zeros((len(classes), NB)); cnt = np.zeros(len(classes))
     for ci, c in enumerate(classes):
         for f in byc[c][:nocc]:
             w0 = load_wav(f); p0 = clf.predict_proba(sc.transform(emb_layers(model, w0)[BL].reshape(1, -1)))[0, ci]
+            e = band_energy(w0); eng[ci] += e / (e.sum() + 1e-9)
             for bi, (lo, hi) in enumerate(BANDS):
                 pm = clf.predict_proba(sc.transform(emb_layers(model, bandstop(w0, lo, hi))[BL].reshape(1, -1)))[0, ci]
                 imp[ci, bi] += (p0 - pm)
             cnt[ci] += 1
         log(f"  occlusion {c} done")
-    imp /= cnt[:, None]
+    imp /= cnt[:, None]; eng /= cnt[:, None]
+    r = float(np.corrcoef(imp.flatten(), eng.flatten())[0, 1])   # does it attend where the call energy is?
     save_json(f"shap_{_tag(a.ckpt)}.json", {"best_layer": BL, "bands_kHz": [f"{lo/1000:g}-{hi/1000:g}" for lo, hi in BANDS],
-              "band_importance": {classes[i]: imp[i].tolist() for i in range(len(classes))}, "mean_importance": imp.mean(0).tolist()})
+              "band_importance": {classes[i]: imp[i].tolist() for i in range(len(classes))},
+              "mean_importance": imp.mean(0).tolist(), "mean_energy": eng.mean(0).tolist(), "attr_vs_energy_pearson": r})
     bl = [f"{lo/1000:g}-{hi/1000:g}" for lo, hi in BANDS]
-    fig, ax = plt.subplots(figsize=(8, 5)); m = abs(imp).max()
-    im = ax.imshow(imp, aspect='auto', cmap='RdBu_r', vmin=-m, vmax=m)
-    ax.set_yticks(range(len(classes))); ax.set_yticklabels(classes, fontsize=8)
-    ax.set_xticks(range(NB)); ax.set_xticklabels(bl, rotation=45, fontsize=8, ha='right'); ax.set_xlabel("kHz band")
-    ax.set_title(f"animal2vec band importance (occlusion, L{BL})"); plt.colorbar(im, ax=ax)
+    fig, ax = plt.subplots(1, 2, figsize=(13, 5)); m = abs(imp).max()
+    im = ax[0].imshow(imp, aspect='auto', cmap='RdBu_r', vmin=-m, vmax=m)
+    ax[0].set_yticks(range(len(classes))); ax[0].set_yticklabels(classes, fontsize=8)
+    ax[0].set_xticks(range(NB)); ax[0].set_xticklabels(bl, rotation=45, fontsize=8, ha='right'); ax[0].set_xlabel("kHz band")
+    ax[0].set_title(f"animal2vec band importance (occlusion, L{BL})"); plt.colorbar(im, ax=ax[0])
+    ax[1].plot(range(NB), imp.mean(0), 'o-', label='attribution (mean)')
+    ax[1].plot(range(NB), eng.mean(0), 's--', c='gray', label='call energy (mean)')
+    ax[1].axhline(0, c='k', lw=.6); ax[1].set_xticks(range(NB)); ax[1].set_xticklabels(bl, rotation=45, fontsize=8, ha='right')
+    ax[1].legend(fontsize=9); ax[1].grid(alpha=.3); ax[1].set_title(f"attribution vs call energy (r={r:.2f})")
     plt.tight_layout(); plt.savefig(outp(f"shap_{_tag(a.ckpt)}.png"), dpi=120)
-    log(f"SHAP saved {outp(f'shap_{_tag(a.ckpt)}.png')}; mean importance {[round(v,3) for v in imp.mean(0)]}")
+    log(f"SHAP saved {outp(f'shap_{_tag(a.ckpt)}.png')}; mean importance {[round(v,3) for v in imp.mean(0)]}; attr-vs-energy r={r:.3f}")
 
 def task_dynamics(a):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
