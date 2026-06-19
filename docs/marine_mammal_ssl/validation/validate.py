@@ -19,6 +19,8 @@ import os, sys, glob, json, time, types, re, argparse, collections, tempfile
 import numpy as np
 
 SR = 8000
+# determinism: cuBLAS workspace must be set BEFORE CUDA initialises (this runs at import, before T())
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
 A2V_REPO  = os.environ.get("A2V_REPO",  os.path.expanduser("~/a2v"))         # animal2vec repo (for `import nn`)
 OUT       = os.environ.get("A2V_OUT",   "a2v_val_results")                  # where JSON/PNG outputs go
@@ -126,6 +128,11 @@ def sanitize_and_save(src, dst):
 
 def load_model(ckpt):
     _setup_fairseq()
+    import torch
+    # reproducible probe scores across runs (clean week-over-week dynamics). The real source of
+    # nondeterminism is data2vec's random masking — disabled via mask=False in emb_layers; these
+    # flags are cheap belt-and-suspenders for the conv frontend.
+    torch.manual_seed(0); torch.backends.cudnn.deterministic = True; torch.backends.cudnn.benchmark = False
     from fairseq import checkpoint_utils
     san = os.path.join(tempfile.gettempdir(), f"a2v_ckpt_sanitized_{os.getpid()}.pt")  # per-process: no clobber
     sanitize_and_save(ckpt, san)
@@ -153,7 +160,7 @@ def emb_layers(model, wav):
     torch = T()
     with torch.inference_mode():
         x = torch.tensor(wav).view(1, -1).to(DEV())
-        out = model(source=x, features_only=True)
+        out = model(source=x, features_only=True, mask=False)   # mask defaults True -> random masking -> stochastic feats; OFF for clean deterministic probe features
         feats = []
         for lr in (out.get("layer_results") or []):
             t = lr[0] if isinstance(lr, (tuple, list)) else lr
@@ -260,6 +267,7 @@ def task_watkins(a):
     clustering = dict(knn_purity=knn_purity(Xs, yall, 10), silhouette=float(silhouette_score(Xs, yall)),
                       nmi_kmeans=float(normalized_mutual_info_score(yall, KMeans(len(set(yall)), n_init=10, random_state=0).fit_predict(Xs))))
     res = dict(best_layer=best, best_macro_f1=per[best], per_layer=per, clustering=clustering, n_classes=len(le.classes_))
+    del model; T().cuda.empty_cache()   # free animal2vec before AVES — one model on GPU at a time
     if a.baselines:
         AVtr, LMtr = aves_logmel_features(wtr); AVte, LMte = aves_logmel_features(wte)
         ap = {f"L{li}": probe_split(AVtr[li], ytr, AVte[li], yte)["macro_f1"] for li in range(len(AVtr))}
@@ -288,6 +296,7 @@ def task_filter(a):
     per = {("final" if li == len(XL) - 1 else f"L{li}"): probe_cv(X, y, groups, binary=True) for li, X in enumerate(XL)}
     best = max(per, key=lambda k: per[k]['macro_f1'])
     res = dict(best_layer=best, best=per[best], per_layer=per, n_signal=len(sig), n_noise=len(noi))
+    del model; T().cuda.empty_cache()   # free animal2vec before AVES — one model on GPU at a time
     if a.baselines:
         AV, LM = aves_logmel_features(wavs)
         ap = {f"L{li}": probe_cv(X, y, groups, binary=True)['macro_f1'] for li, X in enumerate(AV)}

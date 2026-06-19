@@ -35,8 +35,15 @@ $PY $V dynamics                                                                #
 | `A2V_WATKINS` | `data/beans_watkins` | BEANS Watkins arrow dir (train/test) |
 | `A2V_AVES` | `weights/aves-base-bio.torchaudio` | AVES torchaudio weights prefix (`.pt`/`.json`) |
 
-## Verdict (checkpoint 25k)
-Encoder works and is **learning** but **undertrained at ~8 %**: Watkins species 13.5k 0.378 → 25k 0.542
-(+0.164, rising); filtration 0.68 → 0.73 (rising); both still below an 8 kHz log-mel baseline. K-class
-(0.24, flat) is a poor proxy — 8 kHz removes the >4 kHz orca call detail. SHAP: attention is still in the
-lowest band (0–0.5 kHz), the fingerprint of undertraining. → keep training; headline on 16 kHz / species.
+## ⚠️ Extract features with `mask=False`
+data2vec masks ~93 % of the input by default (`mask=True`); extracting probe features that way collapses
+them. `validate.py` calls the encoder with `mask=False` (clean, unmasked, **deterministic**) — the
+canonical frozen-probe path. An earlier run that left masking on produced a spuriously "undertrained" read;
+the numbers below are the corrected, mask-off ones.
+
+## Verdict (checkpoints 13.5k & 25k, clean features)
+The encoder is **strong already at ~8 % of training**: Watkins species (31-way) **13.5k 0.795 → 25k 0.839**
+(rising) — far above the 8 kHz log-mel baseline (0.675) and **matching AVES-8k (0.853)**, a domain-trained
+SSL reference. Signal/noise filtration **0.81** (near-ceiling for every encoder; just under log-mel 0.90).
+SHAP attribution **tracks the call energy** (attr-vs-energy r ≈ 0.73). → healthy run; keep training and
+re-probe later checkpoints; for the headline evaluate on 16 kHz / species where 8 kHz isn't the limiter.
