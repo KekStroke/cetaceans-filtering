@@ -1,4 +1,0 @@
-{
-  "ckpt13k": { "run": "blue (lr5e-5)", "step": 13500 },
-  "ckpt25k": { "run": "blue (lr5e-5)", "step": 25000 }
-}
