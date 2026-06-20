@@ -11,6 +11,7 @@ cd "$A2V_REPO"                      # the animal2vec repo (registers data2vec_mu
 PY=~/a2v_env/bin/python             # torch 2.x + cu12 + fairseq 0.12.2 + the shims
 V=/path/to/validate.py
 
+$PY $V slim    <raw.pt> [--out S.pt]                                           # raw ~5GB ckpt → ~1.3GB inference ckpt
 $PY $V watkins <ckpt> [--run blue --step 30000] [--no-baselines] [--limit N]   # 31-way species + clustering
 $PY $V filter  <ckpt> [--run blue --step 30000] [--no-baselines] [--limit N]   # binary signal/noise
 $PY $V shap    <ckpt> [--limit N]                                              # frequency-band attribution → PNG

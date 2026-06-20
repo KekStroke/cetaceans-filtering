@@ -405,6 +405,13 @@ def task_dynamics(a):
     plt.tight_layout(); plt.savefig(outp("dynamics.png"), dpi=120)
     log(f"DYNAMICS saved {outp('dynamics.png')} ({sum(len(v) for v in runs.values())} points, {len(runs)} runs)")
 
+def task_slim(a):
+    """raw ~5GB training checkpoint -> ~1.3GB inference checkpoint (strip optimizer + EMA, sanitize cfg)."""
+    _setup_fairseq()
+    out = a.out or a.ckpt.replace(".pt", "") + "_slim.pt"
+    sanitize_and_save(a.ckpt, out)
+    log(f"SLIM saved {out}")
+
 # ======================= plumbing =======================
 def _tag(ckpt): return os.path.basename(ckpt).replace("_slim.pt", "").replace(".pt", "")
 def _record(task, a, res, headline):
@@ -429,10 +436,11 @@ def main():
     fp = sub.add_parser("filter");  add_ckpt(fp, run_step=True, bl=True); fp.add_argument("--limit", type=int, default=0, help="cap clips/class for a quick smoke run")
     sp = sub.add_parser("shap");    add_ckpt(sp);                         sp.add_argument("--limit", type=int, default=0, help="cap clips/class for a quick smoke run")
     kc = sub.add_parser("kclass"); add_ckpt(kc); kc.add_argument("--n-per-class", type=int, default=100)
+    sl = sub.add_parser("slim"); sl.add_argument("ckpt"); sl.add_argument("--out", default=None, help="output path (default <ckpt>_slim.pt)")
     sub.add_parser("dynamics")
     a = ap.parse_args()
-    {"watkins": task_watkins, "filter": task_filter, "shap": task_shap,
-     "kclass": task_kclass, "dynamics": task_dynamics}[a.cmd](a)
+    {"watkins": task_watkins, "filter": task_filter, "shap": task_shap, "kclass": task_kclass,
+     "slim": task_slim, "dynamics": task_dynamics}[a.cmd](a)
 
 if __name__ == "__main__":
     main()
