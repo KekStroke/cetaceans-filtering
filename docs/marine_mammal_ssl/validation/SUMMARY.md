@@ -1,5 +1,9 @@
 # animal2vec checkpoint validation — SUMMARY (ckpt 13.5k & 25k, blue run lr=5e-5)
 
+> **⚠️ SUPERSEDED (2026-06-20).** Numbers below were computed on ~93 %-masked features (extraction bug,
+> `mask=True`). Corrected: encoder is **strong** — Watkins species **0.795 → 0.839** (matches AVES-8k 0.853),
+> NOT undertrained. See [`../MASKING_BUG_CORRECTION.md`](../MASKING_BUG_CORRECTION.md).
+
 **One line:** the encoder is **genuinely learning** and **improving on every probe** (species, filtration,
 clustering), but at 25k (~8 % of the 320k schedule) it is **undertrained** — its frozen features are still
 **below an 8 kHz log-mel baseline** on all three tasks. Keep training; evaluate the headline at 16 kHz.
