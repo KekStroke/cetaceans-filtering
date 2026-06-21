@@ -1,35 +1,41 @@
 # Dependencies for validate.py — animal2vec checkpoint validation.  Python 3.10.
-# VERIFIED end-to-end in a clean venv (2026-06-21): the recipe below imports nn + fairseq on torch 2.9.
+# Both recipes below were VERIFIED end-to-end in a clean venv (2026-06-21): nn + fairseq import on torch 2.9.
 #
-# Two things bite (this is what an off-the-shelf `pip install` gets wrong):
-#  (A) **pip must be < 24.1.** Modern pip rejects omegaconf 2.0.x's legacy metadata
-#      ("invalid metadata: .* suffix ...") and the whole resolve fails. Pin `pip==24.0`.
-#  (B) legacy **fairseq 0.12.2** has to run on a MODERN CUDA torch (so it works on new GPUs). Install
-#      fairseq first (it pulls omegaconf 2.0.6 + hydra 1.0.7), THEN override torch from the cu index.
-#  Plus the animal2vec repo's `nn` module hard-imports tensorflow/timm/skimage — install those too.
-#  validate.py's runtime shims (torch._six, compute_mask_indices) bridge the old fairseq API to torch 2.x.
+# Why it's fiddly: legacy **fairseq 0.12.2** must run on a MODERN CUDA torch (to work on new GPUs), and it
+# needs **omegaconf 2.0.x**, whose published wheel has invalid PEP 440 metadata (`PyYAML>=5.1.*`). Modern
+# pip (>= 24.1) REJECTS that wheel → `pip install omegaconf==2.0.6` fails with "No matching distribution"
+# even though the docs say it should work. Two clean ways around it:
 #
-# ---- INSTALL IN THIS ORDER (copy-paste, verified) ----
+# ============================ RECOMMENDED: uv (no pip pin) ============================
+# uv tolerates the legacy metadata, so your pip can stay current.
+#   pip install uv                       # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+#   uv venv a2v_env --python 3.10 && source a2v_env/bin/activate
+#   uv pip install numpy==1.23.5 cython==3.2.5
+#   uv pip install --no-build-isolation fairseq==0.12.2           # auto-pulls omegaconf 2.0.6 + hydra 1.0.7
+#   uv pip install torch==2.9.0+cu128 torchvision==0.24.0+cu128 torchaudio==2.9.0+cu128 \
+#                  --index-url https://download.pytorch.org/whl/cu128
+#   uv pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 \
+#                  matplotlib==3.6.3 datasets==2.14.0
+#   uv pip install tensorflow==2.11.0 timm==0.6.12 scikit-image==0.22.0 intervaltree iopath==0.1.10
+#   git clone https://github.com/livingingroups/animal2vec ~/a2v   # then run with A2V_REPO=~/a2v
+#
+# ============================ ALTERNATIVE: plain pip, pinned to 24.0 ============================
+# Same steps, but FIRST `pip install "pip==24.0"` (NOT `-U pip`) — 24.0 still accepts omegaconf's metadata.
 #   python3.10 -m venv a2v_env && source a2v_env/bin/activate
-#   pip install "pip==24.0" setuptools wheel              # NOT `-U pip` — 24.1+ breaks omegaconf 2.0.x
-#   # 1) build deps, then fairseq (auto-pulls omegaconf 2.0.6 + hydra-core 1.0.7):
+#   pip install "pip==24.0" setuptools wheel
 #   pip install numpy==1.23.5 cython==3.2.5
 #   pip install --no-build-isolation fairseq==0.12.2
-#   # 2) OVERRIDE with the modern CUDA torch stack — index URL for YOUR CUDA (cu128 = CUDA 12.8):
 #   pip install torch==2.9.0+cu128 torchvision==0.24.0+cu128 torchaudio==2.9.0+cu128 \
 #               --index-url https://download.pytorch.org/whl/cu128
-#   # 3) validate.py's own deps:
-#   pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 \
-#               matplotlib==3.6.3 datasets==2.14.0
-#   # 4) the animal2vec `nn` module's deps (it imports these at load time):
+#   pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 matplotlib==3.6.3 datasets==2.14.0
 #   pip install tensorflow==2.11.0 timm==0.6.12 scikit-image==0.22.0 intervaltree iopath==0.1.10
-#   # 5) the repo itself (provides `nn`, registers data2vec_multi) on PYTHONPATH:
-#   git clone https://github.com/livingingroups/animal2vec ~/a2v        # then run with A2V_REPO=~/a2v
 #
-# torchaudio: AVES baseline only · datasets: Watkins only · tensorflow: nn.utils.decode_png (CPU is fine).
+# Notes: pick the --index-url for YOUR CUDA (cu128 = 12.8). torchaudio = AVES baseline only;
+# datasets = Watkins only; tensorflow = nn.utils.decode_png (CPU is fine). validate.py's runtime shims
+# (torch._six, compute_mask_indices) bridge the old fairseq API to torch 2.x.
 # ----------------------------------------------------------------------------------------------------
 #
-# Pinned versions (exactly the verified set). torch/vision/audio need the --index-url above; pip must be 24.0.
+# Pinned versions (the verified set). torch/vision/audio need the --index-url above.
 numpy==1.23.5
 cython==3.2.5
 fairseq==0.12.2
