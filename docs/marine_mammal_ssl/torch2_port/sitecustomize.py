@@ -1,5 +1,10 @@
+# ===========================================================================================
+# OPTIONAL FALLBACK ONLY. Not needed if you install fairseq@920a548 (the commit animal2vec's README
+# requires) — that build has all these APIs natively, so animal2vec trains on torch 2.x with ZERO shims.
+# Use this ONLY if you're stuck on the PyPI `fairseq==0.12.2` wheel (can't build from git): it recreates
+# the 6 data2vec-era APIs that wheel dropped. See TORCH2_PORT.md.
 # Auto-imported at interpreter startup when the animal2vec repo dir is on PYTHONPATH.
-# Installs the torch-2.x shims animal2vec/fairseq-0.12.2 need for TRAINING, before any user import.
+# ===========================================================================================
 import os, sys, types
 
 import torch
