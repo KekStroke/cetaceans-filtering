@@ -5,6 +5,13 @@ modern torch 2.x + GPU. Loads **losslessly by weights** (sanitizes fork cfg keys
 sets `skip_ema`, drops the EMA teacher, patches version-mismatched fairseq fns). Memory-safe: slim 1.3 GB
 checkpoint, 10 s/8 kHz input cap, **one model per process**.
 
+## Install
+The tricky bit is **legacy fairseq 0.12.2 on a modern CUDA torch** (so it runs on new GPUs). A flat
+`pip install -r` fails — torch versions fight. Follow the **ordered recipe in [`requirements.txt`](requirements.txt)**
+(Python 3.10): install fairseq + its old pins first, then override torch/vision/audio from the CUDA index,
+then the rest. You also need the animal2vec repo on `PYTHONPATH` (it provides the `nn` module that registers
+`data2vec_multi`) — set `A2V_REPO` to it. validate.py's runtime shims bridge the old fairseq API to torch 2.x.
+
 ## Usage
 ```bash
 cd "$A2V_REPO"                      # the animal2vec repo (registers data2vec_multi); default ~/a2v

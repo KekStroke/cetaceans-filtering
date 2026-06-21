@@ -1,0 +1,40 @@
+# Dependencies for validate.py — animal2vec checkpoint validation.  Python 3.10.
+#
+# The hard part (and why a flat `pip install -r` does NOT work): legacy **fairseq 0.12.2** has to run on a
+# MODERN CUDA build of torch (so it works on new GPUs — RTX 50xx / sm_120). fairseq pins an old torch and
+# old omegaconf/hydra/numpy; you install those first, then OVERRIDE torch with the cu-build. validate.py's
+# shims (torch._six, compute_mask_indices) bridge the fairseq-1.13-era API to torch 2.x at runtime.
+#
+# ---- INSTALL IN THIS ORDER (copy-paste) ----
+#   python3.10 -m venv a2v_env && source a2v_env/bin/activate
+#   pip install -U pip setuptools wheel
+#   # 1) build deps + fairseq's old pins FIRST (fairseq 0.12.2 builds against numpy<1.24, omegaconf 2.0.x):
+#   pip install numpy==1.23.5 cython==3.2.5
+#   pip install --no-build-isolation fairseq==0.12.2 omegaconf==2.0.6 hydra-core==1.0.7
+#   # 2) OVERRIDE with the modern CUDA torch stack — pick the index URL for YOUR CUDA (cu128 = CUDA 12.8):
+#   pip install torch==2.9.0+cu128 torchvision==0.24.0+cu128 torchaudio==2.9.0+cu128 \
+#               --index-url https://download.pytorch.org/whl/cu128
+#   # 3) the rest:
+#   pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 \
+#               matplotlib==3.6.3 datasets==2.14.0
+#   # 4) the `nn` module (registers data2vec_multi) = the animal2vec repo on PYTHONPATH:
+#   git clone https://github.com/livingingroups/animal2vec ~/a2v        # then run with A2V_REPO=~/a2v
+#
+# torchaudio is only needed for the AVES baseline; datasets only for the Watkins task.
+# ----------------------------------------------------------------------------------------------------
+#
+# Pinned versions (exactly the set verified working). torch/vision/audio need the --index-url above.
+numpy==1.23.5
+cython==3.2.5
+fairseq==0.12.2
+omegaconf==2.0.6
+hydra-core==1.0.7
+torch==2.9.0+cu128
+torchvision==0.24.0+cu128
+torchaudio==2.9.0+cu128
+scipy==1.10.0
+scikit-learn==1.2.0
+librosa==0.10.1
+soundfile==0.12.1
+matplotlib==3.6.3
+datasets==2.14.0
