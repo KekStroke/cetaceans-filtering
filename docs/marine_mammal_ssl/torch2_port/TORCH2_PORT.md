@@ -34,6 +34,16 @@ and a couple of vanilla-fairseq config substitutions.
   variance guards, EMA and dataloader stay eager and cap the gain. Compiling them needs refactoring those
   graph-breaking ops.
 
+## Also verified on this port (2026-06-21)
+- **Anvar's real `composite` optimizer** (fork `dynamic_groups`, differential LR — the model tags decoder
+  params `param_group="decoder"`) runs end-to-end. Shim auto-clones the `default` group config for each
+  discovered param-group so vanilla composite's key-match passes. Config: `real_pretrain.yaml` (per-group
+  `lr_default` shows in the logs). Needs `common.fp16_no_flatten_grads: true`.
+- **16 kHz @ 5 s** runs (`real_16khz.yaml`, `sample_rate: 16000`). 5 s @ 16 kHz = 80000 samples = identical
+  tensor shapes to 8 kHz @ 10 s → **same throughput** (the 16 kHz benefit is bandwidth, not speed). NOTE: it
+  keeps the 8 kHz `conv_feature_layers`; a *proper* 16 kHz frontend would bump n_sinc to ~89 (=√(16000/2))
+  and add one downsampling stride — that's an architecture choice, not a port blocker.
+
 ## The port (what's needed)
 1. **`sitecustomize.py`** on `PYTHONPATH` (auto-loads before fairseq). Six monkeypatches, all against
    fairseq/a2v (not torch internals → version-agnostic across 2.9–2.12):
@@ -54,8 +64,9 @@ and a couple of vanilla-fairseq config substitutions.
    `data2vec2_compile_blocks.patch`. Compiles blocks only; frontend/masking/EMA stay eager.
 
 ## Files
-`sitecustomize.py` · `smoke_pretrain.yaml` (tiny 24GB pretrain config) · `data2vec2_compile_blocks.patch` ·
-`run_smoke.sh` (port smoke) · `run_bench.sh` (compile OFF/ON benchmark).
+`sitecustomize.py` (the 6 shims) · `smoke_pretrain.yaml` (tiny 24GB pretrain, plain adam) ·
+`real_pretrain.yaml` (Anvar's real composite optimizer) · `real_16khz.yaml` (16 kHz @ 5 s) ·
+`data2vec2_compile_blocks.patch` (torch.compile toggle) · `run_smoke.sh` · `run_bench.sh`.
 
 ## Launch
 ```bash

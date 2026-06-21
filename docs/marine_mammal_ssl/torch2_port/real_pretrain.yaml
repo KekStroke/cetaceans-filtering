@@ -1,0 +1,127 @@
+# @package _group_
+# Tiny torch-2.x pretraining smoke / speed-benchmark config (RTX 5090, 24GB).
+# Mirrors Anvar's real pretrain config but: bf16 (not fp16/amp), tiny batch, ~20 updates, no save/val.
+
+common:
+  bf16: true
+  fp16: false
+  amp: false
+  fp16_no_flatten_grads: true
+  log_format: json
+  log_interval: 1
+  tensorboard_logdir: tb
+  seed: 1
+  reset_logging: false
+
+checkpoint:
+  save_dir: /home/yarix/a2v/smoke_ckpt
+  save_interval: 100000
+  save_interval_updates: 0
+  no_epoch_checkpoints: true
+  no_last_checkpoints: true
+  no_save: true
+  no_save_optimizer_state: true
+
+task:
+  _name: audio_ccas
+  data: /home/yarix/a2v_smoke/manifest
+  conv_feature_layers: '[(127, 63, 1)] +[(512, 10, 5)] + [(512, 3, 2)] * 3 + [(512, 3, 1)] + [(512, 2, 1)] * 2'
+  min_sample_size: 1
+  max_sample_size: 80000
+  min_label_size: -1
+  sample_rate: 8000
+  normalize: true
+  with_labels: false
+  verbose_tensorboard_logging: false
+  enable_padding: false
+
+dataset:
+  num_workers: 4
+  max_tokens: 160000   # >= 80000 (one 10s clip); ~2 clips/batch — fits 24GB at clone_batch=1
+  required_batch_size_multiple: 1
+  skip_invalid_size_inputs_valid_test: true
+  disable_validation: true
+  train_subset: pretrain
+  valid_subset: valid_0
+
+distributed_training:
+  distributed_world_size: 1
+  ddp_backend: legacy_ddp
+
+# expanded_model is required: the model + task II-interpolate many keys from it (use_focal_loss,
+# segmentation_metrics, iou/sigma/...). focal/segmentation = false (no labels in SSL -> same compute).
+criterion:
+  _name: expanded_model
+  segmentation_metrics: false
+  use_focal_loss: false
+  log_keys: [ema_decay, target_var, pred_var, model_norm, ema_norm, masked_pct]
+
+optimization:
+  update_freq: [1]
+  max_update: 20
+  clip_norm: 1.0
+  lr: [3.0e-05]
+
+# REAL run: fork `composite` optimizer with dynamic_groups (differential LR; model tags decoder
+# params param_group=decoder). dynamic_groups clones the default group cfg per discovered group.
+optimizer:
+  _name: composite
+  dynamic_groups: true
+  groups:
+    default:
+      lr_float: 3.0e-05
+      optimizer: { _name: adam, adam_betas: [0.9, 0.98], adam_eps: 1.0e-06, weight_decay: 0.01 }
+      lr_scheduler: { _name: cosine, warmup_updates: 2 }
+
+lr_scheduler: pass_through
+
+model:
+  _name: data2vec_multi
+  loss_beta: 0
+  loss_scale: null
+  log_norms: false   # fork EMAModule populates self.logs; vanilla doesn't — skip EMA-norm logging
+  depth: 12
+  embed_dim: 768
+  num_heads: 12
+  clone_batch: 1
+  ema_decay: 0.9997
+  ema_end_decay: 1
+  ema_anneal_end_step: 300000
+  ema_encoder_only: false
+  average_top_k_layers: 8
+  instance_norm_target_layer: true
+  layer_norm_target_layer: false
+  layer_norm_targets: false
+  layerdrop: 0
+  norm_eps: 1.0e-05
+  supported_modality: AUDIO
+  target_mixup: false
+  source_mixup: 0.0
+  mixup_prob: 0.0
+  same_mixup: true
+  mixing_window_length: 0.05
+  gain_mode: A_weighting
+  modalities:
+    audio:
+      sinc_input: true
+      apply_window_to_root: false
+      use_pswish: true
+      sinc_norm: layer_norm
+      conv_pos_depth: 5
+      conv_pos_width: 95
+      conv_pos_groups: 16
+      prenet_depth: 4
+      mask_prob: 1.5
+      mask_length: 2
+      mask_prob_adjust: 0.05
+      inverse_mask: false
+      mask_noise_std: 0.01
+      mask_dropout: 0
+      add_masks: false
+      ema_local_encoder: false
+      use_alibi_encoder: true
+      prenet_layerdrop: 0
+      prenet_dropout: 0.1
+      learned_alibi_scale: true
+      learned_alibi_scale_per_head: true
+      decoder: { input_dropout: 0.1, decoder_dim: 512, decoder_groups: 16, decoder_kernel: 7, decoder_layers: 2 }

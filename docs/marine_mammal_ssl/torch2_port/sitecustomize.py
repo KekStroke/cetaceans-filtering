@@ -86,4 +86,33 @@ try:
 except Exception as e:
     print("[sitecustomize] ModelCriterion patch skipped:", e, flush=True)
 
+# (f) composite optimizer `dynamic_groups` (fork feature): the model tags decoder params with
+#     param_group="decoder", but the config defines only groups.default. dynamic_groups clones the
+#     default group config for each discovered param_group so vanilla composite's key-match passes.
+try:
+    import dataclasses, copy as _cp2
+    from fairseq.optim import composite as _comp
+    from omegaconf import open_dict as _od
+    _COC = _comp.CompositeOptimizerConfig
+    if "dynamic_groups" not in getattr(_COC, "__dataclass_fields__", {}):
+        _COC.__annotations__["dynamic_groups"] = bool
+        _f = dataclasses.field(default=False); _f.name = "dynamic_groups"; _f.type = bool
+        _f._field_type = dataclasses._FIELD
+        _COC.__dataclass_fields__["dynamic_groups"] = _f
+        setattr(_COC, "dynamic_groups", False)
+    _FCO = _comp.FairseqCompositeOptimizer
+    _orig_fco_init = _FCO.__init__
+    def _fco_init(self, cfg, params):
+        if getattr(cfg, "dynamic_groups", False) and "default" in cfg.groups:
+            discovered = set(getattr(p, "param_group", "default") for p in params)
+            with _od(cfg.groups):
+                for g in discovered:
+                    if g not in cfg.groups:
+                        cfg.groups[g] = _cp2.deepcopy(cfg.groups["default"])
+        _orig_fco_init(self, cfg, params)
+    _FCO.__init__ = _fco_init
+    print("[sitecustomize] composite dynamic_groups shim installed", flush=True)
+except Exception as e:
+    print("[sitecustomize] composite patch skipped:", e, flush=True)
+
 print(f"[sitecustomize] torch {torch.__version__} shims installed", flush=True)
