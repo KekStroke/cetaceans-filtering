@@ -56,14 +56,24 @@ this is config, not code). torchvision/torchaudio must match the torch ABI (else
 - **Native bf16** removes the fp16 `loss_scale` collapse / Inf-NaN you hit at large batch.
 - Unlocks `torch.compile` (the +12%) and future SDPA/flash + fused optimizers.
 
+## Other speedup levers (measured earlier, secondary)
+On the existing torch-1.13 / A100 stack we benchmarked the param knobs — all minor or risky, which is *why*
+torch.compile is the lever worth the move:
+- **TF32 ≈ +0.4%** — negligible because training is already bf16 (TF32 only touches fp32-fallback ops).
+- **`max_tokens`↑ / `update_freq`↓ doesn't help** — observed batch is capped by sentence count, not tokens
+  (compute-bound), so it gives ~nothing; large settings hit Inf/NaN.
+- **`clone_batch=6` ≈ +37% throughput** but it changes the multimask SSL objective (more masked views per
+  sample) — not lossless; validate a checkpoint before adopting.
+(Full A100 analysis + the TF32 drop-in + the optional vanilla-wheel `sitecustomize.py` fallback live on the
+`archive/a100-speedup-full` branch.)
+
 ## Files
-- `data2vec2_compile_blocks.patch` — the **only** source edit (torch.compile toggle in data2vec2.py).
-- `real_pretrain.yaml` — real config (composite optimizer) for the smoke. `real_16khz.yaml` — 16 kHz @ 5 s.
-  `smoke_pretrain.yaml` — simplified (plain adam) variant. `run_smoke.sh` / `run_bench.sh` — portable runners.
-- `sitecustomize.py` — **OPTIONAL FALLBACK ONLY** — recreates the 6 missing APIs *if you're forced onto the
-  PyPI `fairseq==0.12.2` wheel* (no git build). **Not needed** with fairseq@920a548.
+- `TORCH2_PORT.md` — this (recipe + benchmark).
+- `data2vec2_compile_blocks.patch` — the **only** source edit (the torch.compile toggle in data2vec2.py).
+- `real_pretrain.yaml` — example config (composite optimizer + bf16). `real_16khz.yaml` — 16 kHz @ 5 s variant.
 
 ## Caveats
 Measured on one 5090 laptop at small batch — on the A100 at clone_batch=12 the compute/overhead balance (and
 exact compile %) will differ. The smoke uses tiny data/steps to prove the stack; for real training keep the
-full schedule.
+full schedule. To run on the PyPI `fairseq==0.12.2` wheel instead of the git commit, the 6-shim
+`sitecustomize.py` on `archive/a100-speedup-full` recreates the missing APIs (not needed with @920a548).
