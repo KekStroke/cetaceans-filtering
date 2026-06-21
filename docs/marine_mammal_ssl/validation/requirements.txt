@@ -1,0 +1,48 @@
+# Dependencies for validate.py — animal2vec checkpoint validation.  Python 3.10.
+# VERIFIED end-to-end in a clean venv (2026-06-21): nn + fairseq import + checkpoint load on torch 2.9.
+#
+# The one gotcha: legacy **fairseq 0.12.2** needs **omegaconf 2.0.x**, whose wheel has a non-standard
+# dependency specifier (`PyYAML>=5.1.*`). pip >= 24.1 ENFORCES PEP 440 and rejects it, so the resolve dies
+# ("Cannot install fairseq ... omegaconf<2.1 ..."). The standard, battle-tested fix for the whole
+# fairseq/RVC world is to **pin pip to 24.0** (it still accepts the old metadata). It's a venv-local pin,
+# not a system change. See pip issue #12063 / fairseq #2244.
+#
+# ============================ RECIPE (plain pip, pinned to 24.0) ============================
+#   python3.10 -m venv a2v_env && source a2v_env/bin/activate
+#   pip install "pip==24.0" setuptools wheel              # <-- the fix. NOT `-U pip` (24.1+ breaks omegaconf 2.0.x)
+#   pip install numpy==1.23.5 cython==3.2.5
+#   pip install --no-build-isolation fairseq==0.12.2      # auto-pulls omegaconf 2.0.6 + hydra-core 1.0.7
+#   pip install torch==2.9.0+cu128 torchvision==0.24.0+cu128 torchaudio==2.9.0+cu128 \
+#               --index-url https://download.pytorch.org/whl/cu128   # pick the index for YOUR CUDA
+#   pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 matplotlib==3.6.3 datasets==2.14.0 pyarrow==15.0.2 fsspec==2023.6.0
+#   pip install tensorflow==2.11.0 timm==0.6.12 scikit-image==0.22.0 intervaltree iopath==0.1.10
+#   git clone https://github.com/livingingroups/animal2vec ~/a2v      # provides `nn`; run with A2V_REPO=~/a2v
+#
+# Don't want to pin pip? `uv` tolerates the old metadata — same steps with `uv pip install …` on current pip.
+# torchaudio = AVES baseline only; datasets = Watkins only; tensorflow = nn.utils.decode_png (CPU is fine).
+# pyarrow/fsspec are pinned for datasets==2.14.0 Watkins cache compatibility.
+# validate.py's runtime shims (torch._six, compute_mask_indices) bridge the old fairseq API to torch 2.x.
+# ----------------------------------------------------------------------------------------------------
+#
+# Pinned versions (the verified set). torch/vision/audio need the --index-url above.
+numpy==1.23.5
+cython==3.2.5
+fairseq==0.12.2
+omegaconf==2.0.6
+hydra-core==1.0.7
+torch==2.9.0+cu128
+torchvision==0.24.0+cu128
+torchaudio==2.9.0+cu128
+scipy==1.10.0
+scikit-learn==1.2.0
+librosa==0.10.1
+soundfile==0.12.1
+matplotlib==3.6.3
+datasets==2.14.0
+pyarrow==15.0.2
+fsspec==2023.6.0
+tensorflow==2.11.0
+timm==0.6.12
+scikit-image==0.22.0
+intervaltree
+iopath==0.1.10
