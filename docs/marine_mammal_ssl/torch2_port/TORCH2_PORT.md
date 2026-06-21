@@ -33,8 +33,13 @@ uv pip install scipy scikit-learn librosa soundfile matplotlib pandas \
 git clone https://github.com/livingingroups/animal2vec ~/a2v
 # then: bf16 in the config (common.bf16=true, fp16=false, amp=false) and train. No shims, no source edits.
 ```
-The only config change vs the legacy run is **bf16** (sidesteps the fp16 loss-scale collapse / AMP path —
-this is config, not code). torchvision/torchaudio must match the torch ABI (else `torchvision::nms` missing).
+The only **config** change vs the legacy run — apply to your existing pretrain yaml, nothing else:
+```yaml
+common: { bf16: true, fp16: false, amp: false }   # the whole port (sidesteps the fp16 loss-scale / AMP path)
+# 16 kHz: also set task.sample_rate: 16000 + model.modalities.audio.sample_rate: 16000, and use 5 s clips
+#         (= 80000 samples = same tensor shapes as 8 kHz @ 10 s). 'Proper' 16 kHz: n_sinc≈89 + an extra stride.
+```
+torchvision/torchaudio must match the torch ABI (else `torchvision::nms` missing).
 
 ## torch.compile benchmark (RTX 5090 24GB, bf16, depth12/embed768, steady-state ms/optimizer-update)
 | stack | eager | compile (blocks, default, dynamic) | speedup |
@@ -67,10 +72,12 @@ torch.compile is the lever worth the move:
 (Full A100 analysis + the TF32 drop-in + the optional vanilla-wheel `sitecustomize.py` fallback live on the
 `archive/a100-speedup-full` branch.)
 
-## Files
-- `TORCH2_PORT.md` — this (recipe + benchmark).
+## Files (2)
+- `TORCH2_PORT.md` — this: the recipe, the config delta (above), and the benchmark.
 - `data2vec2_compile_blocks.patch` — the **only** source edit (the torch.compile toggle in data2vec2.py).
-- `real_pretrain.yaml` — example config (composite optimizer + bf16). `real_16khz.yaml` — 16 kHz @ 5 s variant.
+
+(The config change is the 3-line `bf16` delta above — no need to ship a copy of the full pretrain yaml. Ready
+example configs + the vanilla-wheel `sitecustomize.py` fallback live on `archive/a100-speedup-full`.)
 
 ## Caveats
 Measured on one 5090 laptop at small batch — on the A100 at clone_batch=12 the compute/overhead balance (and
