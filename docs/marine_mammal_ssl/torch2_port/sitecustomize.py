@@ -1,4 +1,4 @@
-# Auto-imported at interpreter startup when /home/yarix/a2v is on PYTHONPATH.
+# Auto-imported at interpreter startup when the animal2vec repo dir is on PYTHONPATH.
 # Installs the torch-2.x shims animal2vec/fairseq-0.12.2 need for TRAINING, before any user import.
 import os, sys, types
 

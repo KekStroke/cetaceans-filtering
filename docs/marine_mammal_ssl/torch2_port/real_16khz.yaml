@@ -15,7 +15,7 @@ common:
   reset_logging: false
 
 checkpoint:
-  save_dir: /home/yarix/a2v/smoke_ckpt
+  save_dir: ./outputs/ckpt
   save_interval: 100000
   save_interval_updates: 0
   no_epoch_checkpoints: true
@@ -25,7 +25,7 @@ checkpoint:
 
 task:
   _name: audio_ccas
-  data: /home/yarix/a2v_smoke16/manifest
+  data: ./manifest16   # <- 16kHz 5s manifest dir (pretrain.tsv/valid_0.tsv)
   conv_feature_layers: '[(127, 63, 1)] +[(512, 10, 5)] + [(512, 3, 2)] * 3 + [(512, 3, 1)] + [(512, 2, 1)] * 2'
   min_sample_size: 1
   max_sample_size: 80000
