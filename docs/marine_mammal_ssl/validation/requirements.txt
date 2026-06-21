@@ -1,29 +1,35 @@
 # Dependencies for validate.py — animal2vec checkpoint validation.  Python 3.10.
+# VERIFIED end-to-end in a clean venv (2026-06-21): the recipe below imports nn + fairseq on torch 2.9.
 #
-# The hard part (and why a flat `pip install -r` does NOT work): legacy **fairseq 0.12.2** has to run on a
-# MODERN CUDA build of torch (so it works on new GPUs — RTX 50xx / sm_120). fairseq pins an old torch and
-# old omegaconf/hydra/numpy; you install those first, then OVERRIDE torch with the cu-build. validate.py's
-# shims (torch._six, compute_mask_indices) bridge the fairseq-1.13-era API to torch 2.x at runtime.
+# Two things bite (this is what an off-the-shelf `pip install` gets wrong):
+#  (A) **pip must be < 24.1.** Modern pip rejects omegaconf 2.0.x's legacy metadata
+#      ("invalid metadata: .* suffix ...") and the whole resolve fails. Pin `pip==24.0`.
+#  (B) legacy **fairseq 0.12.2** has to run on a MODERN CUDA torch (so it works on new GPUs). Install
+#      fairseq first (it pulls omegaconf 2.0.6 + hydra 1.0.7), THEN override torch from the cu index.
+#  Plus the animal2vec repo's `nn` module hard-imports tensorflow/timm/skimage — install those too.
+#  validate.py's runtime shims (torch._six, compute_mask_indices) bridge the old fairseq API to torch 2.x.
 #
-# ---- INSTALL IN THIS ORDER (copy-paste) ----
+# ---- INSTALL IN THIS ORDER (copy-paste, verified) ----
 #   python3.10 -m venv a2v_env && source a2v_env/bin/activate
-#   pip install -U pip setuptools wheel
-#   # 1) build deps + fairseq's old pins FIRST (fairseq 0.12.2 builds against numpy<1.24, omegaconf 2.0.x):
+#   pip install "pip==24.0" setuptools wheel              # NOT `-U pip` — 24.1+ breaks omegaconf 2.0.x
+#   # 1) build deps, then fairseq (auto-pulls omegaconf 2.0.6 + hydra-core 1.0.7):
 #   pip install numpy==1.23.5 cython==3.2.5
-#   pip install --no-build-isolation fairseq==0.12.2 omegaconf==2.0.6 hydra-core==1.0.7
-#   # 2) OVERRIDE with the modern CUDA torch stack — pick the index URL for YOUR CUDA (cu128 = CUDA 12.8):
+#   pip install --no-build-isolation fairseq==0.12.2
+#   # 2) OVERRIDE with the modern CUDA torch stack — index URL for YOUR CUDA (cu128 = CUDA 12.8):
 #   pip install torch==2.9.0+cu128 torchvision==0.24.0+cu128 torchaudio==2.9.0+cu128 \
 #               --index-url https://download.pytorch.org/whl/cu128
-#   # 3) the rest:
+#   # 3) validate.py's own deps:
 #   pip install scipy==1.10.0 scikit-learn==1.2.0 librosa==0.10.1 soundfile==0.12.1 \
 #               matplotlib==3.6.3 datasets==2.14.0
-#   # 4) the `nn` module (registers data2vec_multi) = the animal2vec repo on PYTHONPATH:
+#   # 4) the animal2vec `nn` module's deps (it imports these at load time):
+#   pip install tensorflow==2.11.0 timm==0.6.12 scikit-image==0.22.0 intervaltree iopath==0.1.10
+#   # 5) the repo itself (provides `nn`, registers data2vec_multi) on PYTHONPATH:
 #   git clone https://github.com/livingingroups/animal2vec ~/a2v        # then run with A2V_REPO=~/a2v
 #
-# torchaudio is only needed for the AVES baseline; datasets only for the Watkins task.
+# torchaudio: AVES baseline only · datasets: Watkins only · tensorflow: nn.utils.decode_png (CPU is fine).
 # ----------------------------------------------------------------------------------------------------
 #
-# Pinned versions (exactly the set verified working). torch/vision/audio need the --index-url above.
+# Pinned versions (exactly the verified set). torch/vision/audio need the --index-url above; pip must be 24.0.
 numpy==1.23.5
 cython==3.2.5
 fairseq==0.12.2
@@ -38,3 +44,8 @@ librosa==0.10.1
 soundfile==0.12.1
 matplotlib==3.6.3
 datasets==2.14.0
+tensorflow==2.11.0
+timm==0.6.12
+scikit-image==0.22.0
+intervaltree
+iopath==0.1.10

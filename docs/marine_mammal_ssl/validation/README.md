@@ -6,11 +6,15 @@ sets `skip_ema`, drops the EMA teacher, patches version-mismatched fairseq fns).
 checkpoint, 10 s/8 kHz input cap, **one model per process**.
 
 ## Install
-The tricky bit is **legacy fairseq 0.12.2 on a modern CUDA torch** (so it runs on new GPUs). A flat
-`pip install -r` fails — torch versions fight. Follow the **ordered recipe in [`requirements.txt`](requirements.txt)**
-(Python 3.10): install fairseq + its old pins first, then override torch/vision/audio from the CUDA index,
-then the rest. You also need the animal2vec repo on `PYTHONPATH` (it provides the `nn` module that registers
-`data2vec_multi`) — set `A2V_REPO` to it. validate.py's runtime shims bridge the old fairseq API to torch 2.x.
+Follow the **ordered recipe in [`requirements.txt`](requirements.txt)** (Python 3.10, verified end-to-end).
+A flat `pip install -r` does **not** work — two gotchas:
+- **Pin `pip==24.0`** (not `-U pip`): pip ≥ 24.1 rejects omegaconf 2.0.x's legacy metadata and the resolve fails.
+- **legacy fairseq 0.12.2 on a modern CUDA torch**: install fairseq first (it pulls omegaconf 2.0.6 / hydra
+  1.0.7), then override `torch/vision/audio` from the CUDA index.
+
+Also install the animal2vec `nn` module's own deps (`tensorflow timm scikit-image intervaltree iopath`) and put
+the repo on `PYTHONPATH` (it registers `data2vec_multi`) via `A2V_REPO`. validate.py's runtime shims bridge the
+old fairseq API to torch 2.x.
 
 ## Usage
 ```bash
