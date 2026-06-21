@@ -6,19 +6,19 @@ sets `skip_ema`, drops the EMA teacher, patches version-mismatched fairseq fns).
 checkpoint, 10 s/8 kHz input cap, **one model per process**.
 
 ## Install
-Follow the **ordered recipe in [`requirements.txt`](requirements.txt)** (Python 3.10, both paths verified
-end-to-end). A flat `pip install -r` does **not** work — legacy fairseq 0.12.2 needs omegaconf 2.0.x, whose
-wheel has invalid PEP 440 metadata that **modern pip (≥ 24.1) rejects** (`pip install omegaconf==2.0.6` fails
-with "No matching distribution", despite the docs).
+Follow the **ordered recipe in [`requirements.txt`](requirements.txt)** (Python 3.10, verified end-to-end).
+A flat `pip install -r` does **not** work — legacy fairseq 0.12.2 needs omegaconf 2.0.x, whose wheel has a
+non-standard metadata specifier (`PyYAML>=5.1.*`) that **pip ≥ 24.1 rejects** (the resolve dies with
+"Cannot install fairseq … omegaconf<2.1"). The standard fix across the fairseq/RVC ecosystem:
 
-- **Recommended — `uv`**: tolerates the legacy metadata, so your pip can stay current. `pip install uv`, then
-  the `uv pip install …` sequence in `requirements.txt`.
-- **Or plain pip**, but `pip install "pip==24.0"` first (not `-U pip`).
-
-Either way: install fairseq first (it pulls omegaconf 2.0.6 / hydra 1.0.7), then override `torch/vision/audio`
-from the CUDA index, then the rest + the animal2vec `nn` deps (`tensorflow timm scikit-image intervaltree
-iopath`). Put the repo on `PYTHONPATH` via `A2V_REPO` (it registers `data2vec_multi`). validate.py's runtime
-shims bridge the old fairseq API to torch 2.x.
+```bash
+pip install "pip==24.0"          # the fix (venv-local pin, not -U pip). pip 24.0 still accepts the old metadata
+```
+then install fairseq first (it pulls omegaconf 2.0.6 / hydra 1.0.7), override `torch/vision/audio` from the
+CUDA index, then the rest + the animal2vec `nn` deps (`tensorflow timm scikit-image intervaltree iopath`).
+Put the repo on `PYTHONPATH` via `A2V_REPO` (it registers `data2vec_multi`); validate.py's runtime shims
+bridge the old fairseq API to torch 2.x. (Don't want to pin pip? `uv pip install …` the same list — uv
+tolerates the old metadata on current pip.)
 
 ## Usage
 ```bash
