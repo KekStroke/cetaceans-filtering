@@ -1,0 +1,21 @@
+diff --git a/nn/data2vec2.py b/nn/data2vec2.py
+index 1a9ba5e..d3a9cf0 100644
+--- a/nn/data2vec2.py
++++ b/nn/data2vec2.py
+@@ -275,6 +275,16 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
+         dpr = np.linspace(cfg.start_drop_path_rate, cfg.end_drop_path_rate, cfg.depth)
+ 
+         self.blocks = nn.ModuleList([make_block(dpr[i]) for i in range(cfg.depth)])
++        # torch.compile benchmark toggle (env A2V_COMPILE_BLOCKS=1). Compile transformer blocks only —
++        # sinc frontend, masking (x[masked_b]) and .item() var-guards stay eager (hard graph breaks).
++        import os as _os
++        if _os.environ.get("A2V_COMPILE_BLOCKS") == "1":
++            import torch as _t
++            _mode = _os.environ.get("A2V_COMPILE_MODE", "default")
++            self.blocks = nn.ModuleList([
++                _t.compile(b, mode=_mode, dynamic=True, fullgraph=False) for b in self.blocks
++            ])
++            print(f"[a2v] torch.compile blocks ON (mode={_mode}, n={len(self.blocks)})", flush=True)
+ 
+         self.norm = None
+         if cfg.layer_norm_first:
