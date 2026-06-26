@@ -3,7 +3,9 @@
 animal2vec checkpoint validation — single turnkey CLI (modern torch 2.x + GPU; lossless by weights).
 
 Loads a data2vec_multi pretraining checkpoint and runs frozen-probe validation. One subcommand per task;
-each loads ONE model in the process (memory-safe: 10s/8kHz input cap, slim checkpoint, no second model).
+each loads ONE model in the process (memory-safe: 80000-sample input cap, slim checkpoint, no second model).
+The input sample rate is auto-detected from the checkpoint (8 kHz vs 16 kHz), so the same commands work for
+both; SHAP bands then span 0..Nyquist. Override with A2V_SR if a checkpoint omits the rate.
 
   python validate.py watkins  <ckpt> [--run R --step S] [--no-baselines]   # 31-way species + clustering
   python validate.py filter   <ckpt> [--run R --step S] [--no-baselines]   # binary signal/noise
@@ -12,13 +14,17 @@ each loads ONE model in the process (memory-safe: 10s/8kHz input cap, slim check
   python validate.py dynamics                                              # plot accumulated runs/steps
 
 Env (override the defaults): A2V_REPO (~/a2v), A2V_OUT (./a2v_val_results), A2V_KCLASS, A2V_WATKINS,
-A2V_AVES. Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
+A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap in samples, default 80000).
+Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
   cd ~/a2v && ~/a2v_env/bin/python /path/validate.py watkins ~/a2v_ckpts/ckpt25k_slim.pt
 """
 import os, sys, glob, json, time, types, re, argparse, collections, tempfile
 import numpy as np
 
-SR = 8000
+SR = int(os.environ.get("A2V_SR", 8000))   # model input sample rate; auto-detected from the ckpt in load_model
+_SR_FORCED = "A2V_SR" in os.environ        # if the user pinned A2V_SR, don't override it from the checkpoint
+MAXLEN = int(os.environ.get("A2V_MAXLEN", 80000))  # hard input cap in SAMPLES (=10s@8k =5s@16k): matches the
+#                                                    train window and caps O(T^2) attention memory at any SR
 # determinism: cuBLAS workspace must be set BEFORE CUDA initialises (this runs at import, before T())
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
@@ -33,6 +39,28 @@ def load_json(name, default):
     try: return json.load(open(p))
     except Exception: return default
 def save_json(name, obj): json.dump(obj, open(outp(name), "w"), indent=2)
+
+def _detect_set_sr(cfg):
+    """Set the global SR from the checkpoint's sample_rate so 16 kHz models get 16 kHz input (the sinc
+    kernels are rate-specific — feeding 8 kHz audio to a 16 kHz model misreads every frequency by 2x).
+    cfg = ck['cfg']. Env A2V_SR (if set) wins. Returns the SR in use."""
+    global SR
+    if _SR_FORCED:
+        return SR
+    rate = None
+    for path in (("task", "sample_rate"), ("model", "sample_rate"),
+                 ("model", "modalities", "audio", "sample_rate")):
+        c = cfg
+        try:
+            for k in path:
+                c = c.get(k) if hasattr(c, "get") else c[k]
+            if c: rate = int(c); break
+        except Exception:
+            continue
+    if rate and rate != SR:
+        log(f"sample_rate {rate} Hz from checkpoint (was {SR}); using {rate} Hz")
+        SR = rate
+    return SR
 
 # ======================= model loader (lazy: only when a checkpoint is needed) =======================
 _T = None
@@ -89,6 +117,7 @@ def sanitize_and_save(src, dst):
     log("loading checkpoint for sanitize ...")
     ck = T().load(src, map_location='cpu', weights_only=False)
     cfg = ck['cfg']
+    _detect_set_sr(cfg)   # pick up the model's sample rate (8k vs 16k) before any audio is loaded
     from nn.audio_tasks import AudioConfigCCAS
     try:
         from nn.data2vec2 import Data2VecMultiConfig
@@ -142,13 +171,13 @@ def load_model(ckpt):
     log(f"model on {DEV()}: {type(m).__name__}, {sum(p.numel() for p in m.parameters())/1e6:.0f}M params")
     return m
 
-def norm_wav(y, sr, maxsec=10):
+def norm_wav(y, sr):
     y = np.asarray(y, dtype=np.float32)
     if y.ndim > 1: y = y.mean(1)
-    nmax = maxsec * sr
+    nmax = int(MAXLEN * sr / SR)                       # native-sample budget = MAXLEN at the model SR (center-crop first)
     if len(y) > nmax: s = (len(y) - nmax) // 2; y = y[s:s + nmax]
     if sr != SR: import librosa; y = librosa.resample(y, orig_sr=sr, target_sr=SR)
-    if len(y) > maxsec * SR: y = y[:maxsec * SR]
+    if len(y) > MAXLEN: y = y[:MAXLEN]                 # hard cap in samples (memory-safe at any SR)
     if len(y) < 400: y = np.pad(y, (0, 400 - len(y)))
     y = y - y.mean(); st = y.std(); return (y / (st + 1e-8) if st > 1e-8 else y).astype(np.float32)
 
@@ -330,12 +359,12 @@ def task_shap(a):
     from scipy.signal import butter, sosfiltfilt
     from sklearn.preprocessing import StandardScaler, LabelEncoder
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-    NB = 8; BANDS = [(i * 500, (i + 1) * 500) for i in range(NB)]
     nper = getattr(a, "limit", 0) or 100; nocc = min(10, getattr(a, "limit", 0) or 10)
     items = gather_kclass(KCLASS, nper)
     files = [f for f, _, _ in items]
     le = LabelEncoder(); y = le.fit_transform([c for _, c, _ in items]); groups = np.array([g for _, _, g in items]); classes = list(le.classes_)
-    model = load_model(a.ckpt)
+    model = load_model(a.ckpt)   # sets SR (8k vs 16k) -> band grid spans up to the model's Nyquist
+    NB = max(8, int((SR / 2) // 500)); BANDS = [(i * 500, (i + 1) * 500) for i in range(NB)]  # 0..SR/2 in 0.5 kHz steps
     XL = None
     for i, f in enumerate(files):
         fs = emb_layers(model, load_wav(f))
