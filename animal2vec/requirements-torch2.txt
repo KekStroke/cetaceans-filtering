@@ -1,0 +1,27 @@
+# Tested animal2vec training stack.
+#
+# Use Python 3.10. Install the torch/torchaudio wheels that match your CUDA
+# runtime first if these PyPI wheels are not appropriate for your machine:
+#   pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+torch==2.2.2
+torchaudio==2.2.2
+fairseq==0.12.2
+h5py==3.10.0
+hydra-core==1.0.7
+intervaltree==3.1.0
+iopath==0.1.10
+iterative-stratification==0.1.7
+librosa==0.10.1
+matplotlib==3.6.3
+numpy==1.23.5
+omegaconf==2.0.6
+packaging==24.0
+pandas==1.5.3
+pyarrow==15.0.2
+scikit-image==0.22.0
+scikit-learn==1.2.2
+scipy==1.10.1
+seaborn==0.13.2
+soundfile==0.12.1
+timm==0.6.12
+tqdm==4.64.1
