@@ -63,21 +63,26 @@ python scripts/animal2vec_dataset/build_pretrain_tsv.py \
   --check-exists
 ```
 
-Keep only exact-length segments:
+Keep only exact-length segments and drop degenerate or near-silent clips:
 
 ```bash
 python scripts/animal2vec_dataset/filter_exact_tsv.py \
   --input "$STAGING_ROOT/pretrain_all.tsv" \
-  --output "$STAGING_ROOT/pretrain_exact.tsv" \
+  --output "$STAGING_ROOT/pretrain_clean.tsv" \
   --frames "$FRAMES" \
-  --report "$LOG_DIR/filter_exact_report.txt"
+  --report "$LOG_DIR/filter_report.txt" \
+  --check-audio-quality \
+  --rejects "$LOG_DIR/rejected_quality.tsv" \
+  --std-min 1e-6 \
+  --rms-min 1e-5 \
+  --peak-min 1e-4
 ```
 
 Create the animal2vec-compatible structure:
 
 ```bash
 python scripts/animal2vec_dataset/prepare_manifest_for_animal2vec.py \
-  --input-manifest "$STAGING_ROOT/pretrain_exact.tsv" \
+  --input-manifest "$STAGING_ROOT/pretrain_clean.tsv" \
   --output-root "$FINAL_ROOT" \
   --split-name pretrain \
   --mode symlink
@@ -103,7 +108,9 @@ Also spot-check that a first and last row have both:
 
 The 2026-06-26 16 kHz / 5 s build produced:
 
-- rows: `2555743`
+- rows before quality filtering: `2555743`
+- quality rejects: `5319`
+- rows after quality filtering: `2550424`
 - required frames: `80000`
 - bad frame-count rows: `0`
 - missing audio during final conversion: `0`
