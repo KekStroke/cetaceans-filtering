@@ -40,6 +40,7 @@ utils/
     |-- download_watkins.py
     |-- download_noaa_onms.py
     |-- download_orcasound.py
+    |-- download_orcasound_acoustic_separation.py
     |-- download_pacific_sound.py
     |-- download_voices_in_the_sea.py
     `-- download_onc_hydrophones.py
@@ -159,6 +160,18 @@ Output paths:
 - Download cache (original Orcasound files): `data/orcasound/<source>/downloads/...`
 - Output audio for labeling/training: `data/orcasound/<source>/audio/...`
 - Manifest: `data/orcasound/<source>/manifest.jsonl`
+
+Orcasound sound/noise/mixed setup:
+
+```powershell
+uv run python utils/datasets_downloads/download_orcasound_acoustic_separation.py --limit 20
+```
+
+This creates `data/orcasound/acoustic-separation/Train/audio_*` folders with:
+
+- `sound.wav` - clean orca signal
+- `noise.wav` - background noise
+- `mixed.wav` - mixture
 
 Sources are from AWS Open Data Orcasound registry:
 https://registry.opendata.aws/orcasound/
