@@ -63,13 +63,7 @@ paths. Full setup and launch docs:
 animal2vec/README.md
 ```
 
-Smoke test:
-
-```bash
-python -m animal2vec.train --config-name cetaceans/smoke_16khz_5s_torch2 task.data=/path/to/manifest
-```
-
-Full default 16 kHz / 5 second pretraining recipe:
+Default 16 kHz / 5 second pretraining recipe:
 
 ```bash
 python -m animal2vec.train task.data=/path/to/manifest

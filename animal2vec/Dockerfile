@@ -10,4 +10,4 @@ COPY . /workspace/cetaceans-filtering
 
 ENV PYTHONPATH=/workspace/cetaceans-filtering
 
-CMD ["python", "-m", "animal2vec.train", "--config-name", "cetaceans/smoke_16khz_5s_torch2"]
+CMD ["python", "-m", "animal2vec.train"]

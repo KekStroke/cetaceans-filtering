@@ -66,22 +66,7 @@ You can point at any compatible manifest without editing files:
 python -m animal2vec.train task.data=/path/to/manifest
 ```
 
-## Smoke Test
-
-Run a two-update smoke test with a small model:
-
-```bash
-python -m animal2vec.train --config-name cetaceans/smoke_16khz_5s_torch2 \
-  task.data=/path/to/manifest \
-  checkpoint.save_dir=outputs/animal2vec/checkpoints/smoke \
-  common.tensorboard_logdir=outputs/animal2vec/tensorboard/smoke
-```
-
-This verifies the package import path, Torch/Fairseq compatibility, audio
-loading, A-weighted mixup, DDP defaults, and one optimizer step. It does not save
-checkpoints.
-
-## Full Pretraining
+## Training
 
 The default recipe is the 16 kHz / 5 second Torch 2 recipe:
 
@@ -103,9 +88,10 @@ Important defaults:
 - `save_interval_updates: 1000`
 - `keep_interval_updates: 8`
 - `keep_interval_updates_pattern: -1`
+- `keep_best_checkpoints: -1`
 
-The checkpoint retention pattern is set explicitly because Fairseq 0.12 can
-crash when `keep_interval_updates_pattern` is left as `None`.
+The checkpoint retention values are set explicitly because Fairseq 0.12 can
+crash when those fields are left as `None`.
 
 ## Multi-GPU
 
@@ -144,5 +130,5 @@ Keep `reset_optimizer`, `reset_lr_scheduler`, `reset_meters`, and
 - `model.torch_compile` is configurable, but the portable default is `false`
   because compile overhead and graph breaks did not beat eager mode in current
   smoke benchmarks.
-- Large model training needs substantial VRAM. Reduce `dataset.max_tokens`,
-  `model.clone_batch`, or use the smoke config when validating on smaller GPUs.
+- Large model training needs substantial VRAM. Reduce `dataset.max_tokens` or
+  `model.clone_batch` when validating on smaller GPUs.
