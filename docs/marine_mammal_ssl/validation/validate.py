@@ -12,6 +12,7 @@ both; SHAP bands then span 0..Nyquist. Override with A2V_SR if a checkpoint omit
   python validate.py shap     <ckpt>                                       # frequency-band attribution + PNG
   python validate.py kclass   <ckpt>                                       # per-layer probe on Olga K-class
   python validate.py dynamics                                              # plot accumulated runs/steps
+  python validate.py watch    <save_dir> --run R [--device 0]              # live: preserve+validate new ckpts, track BEST
 
 Env (override the defaults): A2V_REPO (~/a2v), A2V_OUT (./a2v_val_results), A2V_KCLASS, A2V_WATKINS,
 A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap in samples, default 80000).
@@ -440,6 +441,77 @@ def task_dynamics(a):
     plt.tight_layout(); plt.savefig(outp("dynamics.png"), dpi=120)
     log(f"DYNAMICS saved {outp('dynamics.png')} ({sum(len(v) for v in runs.values())} points, {len(runs)} runs)")
 
+def _prune_preserved(keep_dir, keep_best, pat):
+    """Keep the top-`keep_best` preserved checkpoints by Watkins-F1 plus the `keep_best` most recent
+    (the true peak may be ahead) + whatever BEST.pt points at; unlink the rest to bound disk."""
+    files = [f for f in glob.glob(os.path.join(keep_dir, "checkpoint_*_*.pt")) if pat.search(os.path.basename(f))]
+    if len(files) <= keep_best * 2: return
+    res = load_json("watkins_results.json", {})
+    f1 = lambda f: (res.get(_tag(f), {}).get("best_macro_f1") or -1.0)
+    step = lambda f: int(pat.search(os.path.basename(f)).group(2))
+    keep = set(sorted(files, key=f1, reverse=True)[:keep_best]) | set(sorted(files, key=step, reverse=True)[:keep_best])
+    link = os.path.join(keep_dir, "BEST.pt")
+    if os.path.lexists(link): keep.add(os.path.join(keep_dir, os.readlink(link)))
+    for f in files:
+        if f in keep: continue
+        try: os.remove(f); log(f"watch: pruned {os.path.basename(f)} (F1={f1(f):.3f})")
+        except OSError: pass
+
+def task_watch(a):
+    """Watch a live training save_dir. For each new checkpoint: (1) hard-link it aside immediately so the
+    `keep_interval_updates` rotation can't delete the peak (what bit us last time); (2) validate it in a fresh
+    subprocess (one model per process = memory-safe); (3) track the best Watkins-F1 (BEST.pt) and refresh
+    dynamics.png. Fully decoupled — it never touches the training process."""
+    import subprocess, shutil
+    save_dir = os.path.abspath(a.save_dir)
+    keep_dir = a.preserve or os.path.join(save_dir, "validated"); os.makedirs(keep_dir, exist_ok=True)
+    pat = re.compile(r"checkpoint_(\d+)_(\d+)\.pt$")
+    seen = set(); best = {"f1": -1.0, "step": None, "name": None}; idle = 0
+    reg = load_json("dynamics_registry.json", {}); wk = load_json("watkins_results.json", {})  # restart-safe
+    for tag, meta in reg.items():
+        if meta.get("run") == a.run and tag in wk:
+            seen.add(int(meta["step"]))
+            if (wk[tag].get("best_macro_f1") or -1) > best["f1"]:
+                best.update(f1=wk[tag]["best_macro_f1"], step=int(meta["step"]), name=tag + ".pt")
+    log(f"watch: {save_dir} -> {keep_dir} | run={a.run} poll={a.poll}s device={a.device} | {len(seen)} already done")
+    while True:
+        cands = sorted((int(m.group(2)), ck) for ck in glob.glob(os.path.join(save_dir, "checkpoint_*_*.pt"))
+                       for m in [pat.search(os.path.basename(ck))] if m and int(m.group(2)) not in seen)
+        for step, ck in cands:
+            dst = os.path.join(keep_dir, os.path.basename(ck))
+            if not os.path.exists(dst):                                   # 1) PRESERVE before rotation can delete it
+                try: os.link(ck, dst)
+                except OSError:
+                    try: shutil.copy2(ck, dst)
+                    except OSError as e: log(f"watch: preserve failed step {step}: {e}"); continue
+            log(f"watch: preserved + validating step {step}")
+            env = dict(os.environ)                                        # 2) VALIDATE in a fresh process (frees GPU on exit)
+            if a.device is not None: env["CUDA_VISIBLE_DEVICES"] = str(a.device)
+            cmd = [sys.executable, os.path.abspath(__file__), "watkins", dst, "--run", a.run, "--step", str(step)]
+            if not a.baselines: cmd.append("--no-baselines")
+            if a.limit: cmd += ["--limit", str(a.limit)]
+            rc = subprocess.run(cmd, env=env).returncode
+            seen.add(step)
+            if rc != 0: log(f"watch: validate rc={rc} step {step} (checkpoint kept; no metric)"); continue
+            f1 = load_json("watkins_results.json", {}).get(_tag(dst), {}).get("best_macro_f1")  # 3) track best
+            if f1 is not None and f1 > best["f1"]:
+                best.update(f1=f1, step=step, name=os.path.basename(dst))
+                link = os.path.join(keep_dir, "BEST.pt")
+                try:
+                    if os.path.lexists(link): os.remove(link)
+                    os.symlink(os.path.basename(dst), link)
+                except OSError: pass
+                log(f"watch: ** NEW BEST step {step} F1={f1:.4f} **")
+            subprocess.run([sys.executable, os.path.abspath(__file__), "dynamics"], env=env)
+            if a.keep_best: _prune_preserved(keep_dir, a.keep_best, pat)
+        if cands:
+            idle = 0; log(f"watch: best so far step {best['step']} F1={best['f1']:.4f} ({len(seen)} validated)")
+        else:
+            idle += 1
+            if a.max_idle and idle >= a.max_idle:
+                log(f"watch: {idle} idle polls — stopping. BEST step {best['step']} F1={best['f1']:.4f} -> {keep_dir}/BEST.pt"); break
+        time.sleep(a.poll)
+
 def task_slim(a):
     """raw ~5GB training checkpoint -> ~1.3GB inference checkpoint (strip optimizer + EMA, sanitize cfg)."""
     _setup_fairseq()
@@ -473,9 +545,18 @@ def main():
     kc = sub.add_parser("kclass"); add_ckpt(kc); kc.add_argument("--n-per-class", type=int, default=100)
     sl = sub.add_parser("slim"); sl.add_argument("ckpt"); sl.add_argument("--out", default=None, help="output path (default <ckpt>_slim.pt)")
     sub.add_parser("dynamics")
+    wt = sub.add_parser("watch"); wt.add_argument("save_dir", help="live training checkpoint dir to watch")
+    wt.add_argument("--run", required=True, help="run label for the dynamics curve")
+    wt.add_argument("--poll", type=int, default=120, help="seconds between scans")
+    wt.add_argument("--device", default=None, help="CUDA_VISIBLE_DEVICES for the validation subprocess (e.g. 0)")
+    wt.add_argument("--preserve", default=None, help="dir to hard-link checkpoints into (default <save_dir>/validated)")
+    wt.add_argument("--keep-best", type=int, default=5, help="prune preserved/ to top-N by F1 + N most-recent (0=keep all)")
+    wt.add_argument("--max-idle", type=int, default=0, help="stop after N idle polls with no new checkpoint (0=forever)")
+    wt.add_argument("--limit", type=int, default=0, help="cap clips/split for faster (approximate) live validation")
+    wt.add_argument("--no-baselines", dest="baselines", action="store_false"); wt.set_defaults(baselines=True)
     a = ap.parse_args()
     {"watkins": task_watkins, "filter": task_filter, "shap": task_shap, "kclass": task_kclass,
-     "slim": task_slim, "dynamics": task_dynamics}[a.cmd](a)
+     "slim": task_slim, "dynamics": task_dynamics, "watch": task_watch}[a.cmd](a)
 
 if __name__ == "__main__":
     main()
