@@ -18,8 +18,14 @@ A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap 
 Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
   cd ~/a2v && ~/a2v_env/bin/python /path/validate.py watkins ~/a2v_ckpts/ckpt25k_slim.pt
 """
-import os, sys, glob, json, time, types, re, argparse, collections, tempfile
+import os, sys, glob, json, time, types, re, argparse, collections, tempfile, warnings
 import numpy as np
+
+# The lbfgs probe rarely hits tol within max_iter on high-dim (1024) embeddings, so sklearn spams a
+# ConvergenceWarning per fit. The macro-F1 *ranking* is stable regardless (every checkpoint is probed the
+# same way), so silence it rather than bump max_iter — changing max_iter mid-curve would break the
+# step-over-step comparability of an accumulating dynamics run.
+warnings.filterwarnings("ignore", message="lbfgs failed to converge")
 
 SR = int(os.environ.get("A2V_SR", 8000))   # model input sample rate; auto-detected from the ckpt in load_model
 _SR_FORCED = "A2V_SR" in os.environ        # if the user pinned A2V_SR, don't override it from the checkpoint
