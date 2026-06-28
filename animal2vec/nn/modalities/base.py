@@ -8,6 +8,7 @@ Train a new model on one or across multiple GPUs.
 """
 
 import logging
+import ast
 import math
 import numpy as np
 import torch
@@ -47,6 +48,8 @@ class D2vModalityConfig:
     keep_masked_pct: float = 0
 
     mask_length: int = 5
+    mask_scale_mode: str = "single"
+    mask_scales: Optional[str] = None
     add_masks: bool = False
     remove_masks: bool = False
     mask_dropout: float = 0.0
@@ -381,6 +384,8 @@ class ModalitySpecificEncoder(nn.Module):
         else:
             B, T, C = x.shape
             cfg = self.modality_cfg
+            mask_scales = parse_mask_scales(cfg.mask_scales)
+            mask_scale_mode = str(cfg.mask_scale_mode).lower()
 
             mask_prob = cfg.mask_prob
 
@@ -391,31 +396,52 @@ class ModalitySpecificEncoder(nn.Module):
             ):
                 mask_prob = np.random.uniform(cfg.mask_prob_min, mask_prob)
 
-            if mask_prob > 0:
-                if cfg.mask_length == 1:
-                    mask_info = random_masking(x, mask_prob, mask_seed)
-                else:
-                    if self.modality_cfg.inverse_mask:
-                        mask_prob = 1 - mask_prob
-
-                    mask = compute_mask_indices(
-                        (B, T),
+            if mask_scales and mask_scale_mode != "single":
+                if mask_scale_mode in {"random", "random_per_batch"}:
+                    scale_idx = np.random.randint(len(mask_scales))
+                    scale_length, scale_prob = mask_scales[scale_idx]
+                    scale_seed = offset_mask_seed(mask_seed, scale_idx)
+                    mask = self.compute_mask_tensor(
+                        x,
                         padding_mask,
-                        mask_prob,
-                        cfg.mask_length,
-                        min_masks=1,
-                        require_same_masks=True,
-                        mask_dropout=cfg.mask_dropout,
-                        add_masks=cfg.add_masks,
-                        seed=mask_seed.seed if mask_seed is not None else None,
-                        epoch=mask_seed.update if mask_seed is not None else None,
-                        indices=mask_seed.ids if mask_seed is not None else None,
+                        scale_prob,
+                        scale_length,
+                        scale_seed,
                     )
+                elif mask_scale_mode == "mixed":
+                    masks = [
+                        self.compute_mask_tensor(
+                            x,
+                            padding_mask,
+                            scale_prob,
+                            scale_length,
+                            offset_mask_seed(mask_seed, scale_idx),
+                        )
+                        for scale_idx, (scale_length, scale_prob) in enumerate(mask_scales)
+                    ]
+                    masks = [mask for mask in masks if mask is not None]
+                    mask = torch.stack(masks, dim=0).any(dim=0) if masks else None
+                else:
+                    raise ValueError(f"unsupported mask_scale_mode={cfg.mask_scale_mode!r}")
 
-                    mask = torch.from_numpy(mask).to(device=x.device)
-                    if self.modality_cfg.inverse_mask:
-                        mask = 1 - mask
-                    mask_info = self.make_maskinfo(x, mask)
+                mask_info = (
+                    self.make_maskinfo(x, normalize_mask(mask))
+                    if mask is not None
+                    else None
+                )
+            elif mask_prob > 0:
+                mask = self.compute_mask_tensor(
+                    x,
+                    padding_mask,
+                    mask_prob,
+                    cfg.mask_length,
+                    mask_seed,
+                )
+                mask_info = (
+                    self.make_maskinfo(x, normalize_mask(mask))
+                    if mask is not None
+                    else None
+                )
             else:
                 mask_info = None
 
@@ -423,6 +449,46 @@ class ModalitySpecificEncoder(nn.Module):
             x = self.apply_mask(x, mask_info)
 
         return x, mask_info
+
+    def compute_mask_tensor(
+            self,
+            x,
+            padding_mask,
+            mask_prob,
+            mask_length,
+            mask_seed: Optional[MaskSeed],
+    ):
+        if mask_prob <= 0:
+            return None
+
+        B, T, C = x.shape
+        cfg = self.modality_cfg
+        mask_length = int(mask_length)
+
+        if mask_length == 1:
+            return random_masking(x, mask_prob, mask_seed).mask.to(device=x.device)
+
+        if cfg.inverse_mask:
+            mask_prob = 1 - mask_prob
+
+        mask = compute_mask_indices(
+            (B, T),
+            padding_mask,
+            mask_prob,
+            mask_length,
+            min_masks=1,
+            require_same_masks=True,
+            mask_dropout=cfg.mask_dropout,
+            add_masks=cfg.add_masks,
+            seed=mask_seed.seed if mask_seed is not None else None,
+            epoch=mask_seed.update if mask_seed is not None else None,
+            indices=mask_seed.ids if mask_seed is not None else None,
+        )
+
+        mask = torch.from_numpy(mask).to(device=x.device)
+        if cfg.inverse_mask:
+            mask = 1 - mask
+        return mask
 
     def make_maskinfo(self, x, mask, shape=None):
         if shape is None:
@@ -495,6 +561,64 @@ def get_annealed_rate(start, end, curr_step, total_steps):
     r = end - start
     pct_remaining = 1 - curr_step / total_steps
     return end - r * pct_remaining
+
+
+def parse_mask_scales(mask_scales):
+    if mask_scales is None:
+        return []
+
+    if isinstance(mask_scales, str):
+        if not mask_scales.strip():
+            return []
+        mask_scales = ast.literal_eval(mask_scales)
+
+    parsed = []
+    for item in mask_scales:
+        if isinstance(item, dict) or hasattr(item, "get"):
+            length = item.get("length", item.get("mask_length"))
+            prob = item.get("prob", item.get("mask_prob"))
+        else:
+            length, prob = item
+
+        length = int(length)
+        prob = float(prob)
+        if length <= 0:
+            raise ValueError(f"mask scale length must be positive, got {length}")
+        if prob < 0:
+            raise ValueError(f"mask scale probability must be non-negative, got {prob}")
+        parsed.append((length, prob))
+
+    return parsed
+
+
+def offset_mask_seed(mask_seed: Optional[MaskSeed], offset: int):
+    if mask_seed is None or offset == 0:
+        return mask_seed
+    return MaskSeed(
+        seed=mask_seed.seed,
+        update=mask_seed.update,
+        ids=mask_seed.ids + int(offset) * 1_000_003,
+    )
+
+
+def normalize_mask(mask):
+    if mask is None:
+        return None
+
+    mask = mask.clone()
+    full_rows = mask.bool().all(dim=1)
+    if full_rows.any():
+        mask[full_rows, 0] = 0
+
+    counts = mask.long().sum(dim=1)
+    target_count = int(counts.min().item())
+    if not bool((counts == target_count).all()):
+        for row_idx, count in enumerate(counts.tolist()):
+            if count <= target_count:
+                continue
+            masked_idx = torch.nonzero(mask[row_idx].bool(), as_tuple=False).flatten()
+            mask[row_idx, masked_idx[target_count:]] = 0
+    return mask
 
 
 # adapted from MAE

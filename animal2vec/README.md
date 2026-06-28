@@ -93,6 +93,30 @@ Important defaults:
 The checkpoint retention values are set explicitly because Fairseq 0.12 can
 crash when those fields are left as `None`.
 
+Additional 16 kHz / 5 second experimental recipes:
+
+- `cetaceans/pretrain_16khz_5s_scale_aware_torch2`: single frontend, one mask scale sampled per batch.
+- `cetaceans/pretrain_16khz_5s_mixed_mask_torch2`: single frontend, several mask scales overlaid together.
+- `cetaceans/pretrain_16khz_5s_multires_torch2`: low/mid/high frontend branches, mixed masks, and branch dropout.
+
+Example:
+
+```bash
+python -m animal2vec.train --config-name cetaceans/pretrain_16khz_5s_multires_torch2 \
+  task.data=/path/to/manifest
+```
+
+The default `cetaceans/pretrain_16khz_5s_torch2` recipe keeps the original
+single-scale `mask_prob`/`mask_length` behavior.
+
+Masking modes:
+
+- `random_per_batch`: choose one `(mask_length, mask_prob)` pair for the whole batch. This keeps the objective focused on one time scale at a time.
+- `mixed`: compute masks for all configured scales and union them. This asks the model to recover short transients and longer context in the same update, so the per-scale probabilities should be lower.
+
+With the current 16 kHz frontend stride, lengths `2`, `16`, `80`, and `200`
+are approximately 5 ms, 40 ms, 200 ms, and 500 ms.
+
 ## Multi-GPU
 
 For one process per GPU on a single machine, set the distributed fields through

@@ -1071,7 +1071,10 @@ class ConvFeatureExtractionModel(tnn.Module):
             apply_window_to_root: bool = False,
             sample_rate=8000,
             sinc_norm="layer_norm",
-            use_pswish=False
+            use_pswish=False,
+            sinc_min_low_hz=50,
+            sinc_min_band_hz=None,
+            sinc_init_scale="mel"
     ):
         super().__init__()
         self.apply_window_to_root = apply_window_to_root
@@ -1088,7 +1091,10 @@ class ConvFeatureExtractionModel(tnn.Module):
                 sinc_input=False,
                 apply_window_to_root=False,
                 sinc_norm="layer_norm",
-                use_pswish=False
+                use_pswish=False,
+                sinc_min_low_hz=50,
+                sinc_min_band_hz=None,
+                sinc_init_scale="mel"
         ):
             def make_conv():
                 if sinc_input or apply_window_to_root:
@@ -1097,9 +1103,12 @@ class ConvFeatureExtractionModel(tnn.Module):
                         kernel_size=k,
                         stride=stride,
                         sample_rate=sample_rate,
+                        min_low_hz=sinc_min_low_hz,
+                        min_band_hz=sinc_min_band_hz,
                         learnable_filters=apply_window_to_root and sinc_input,
                         apply_window_to_root=apply_window_to_root,
-                        return_abs=True if (sinc_norm == "pcen" or sinc_norm == "instance") else False
+                        return_abs=True if (sinc_norm == "pcen" or sinc_norm == "instance") else False,
+                        init_scale=sinc_init_scale,
                     )
                 else:
                     if stride == 1:
@@ -1174,7 +1183,10 @@ class ConvFeatureExtractionModel(tnn.Module):
                     sinc_input=sinc_input and i == 0,
                     apply_window_to_root=apply_window_to_root and i == 0,
                     sinc_norm=sinc_norm if i == 0 else "layer_norm",
-                    use_pswish=use_pswish
+                    use_pswish=use_pswish,
+                    sinc_min_low_hz=sinc_min_low_hz,
+                    sinc_min_band_hz=sinc_min_band_hz,
+                    sinc_init_scale=sinc_init_scale,
                 )
             )
             in_d = dim

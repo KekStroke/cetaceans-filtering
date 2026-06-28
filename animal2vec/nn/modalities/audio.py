@@ -9,6 +9,7 @@ Train a new model on one or across multiple GPUs.
 
 from functools import partial
 import torch
+import torch.nn.functional as F
 import torch.nn as tnn
 import numpy as np
 from dataclasses import dataclass, field
@@ -31,6 +32,12 @@ class D2vAudioConfig(D2vModalityConfig):
     type: Modality = Modality.AUDIO
     extractor_mode: str = "layer_norm"
     conv_feature_layers: str = II("task.conv_feature_layers")
+    frontend_type: str = "single"
+    low_branch_conv_feature_layers: Optional[str] = None
+    mid_branch_conv_feature_layers: Optional[str] = None
+    high_branch_conv_feature_layers: Optional[str] = None
+    multires_align_to: str = "mid"
+    multires_branch_dropout_prob: float = 0.0
     sample_rate: int = II("task.sample_rate")
     conv_pos_width: int = field(
         default=95,
@@ -48,7 +55,90 @@ class D2vAudioConfig(D2vModalityConfig):
     sinc_input: bool = True
     apply_window_to_root: bool = False
     sinc_norm: str = "instance"
+    sinc_min_low_hz: float = 50
+    sinc_min_band_hz: Optional[float] = None
+    sinc_init_scale: str = "mel"
     use_pswish: bool = False
+
+
+class MultiResolutionConvFeatureExtractionModel(tnn.Module):
+    def __init__(
+            self,
+            branch_layers: Dict[str, list],
+            target_branch: str,
+            dropout: float,
+            mode: str,
+            conv_bias: bool,
+            sinc_input: bool,
+            apply_window_to_root: bool,
+            sample_rate: int,
+            sinc_norm: str,
+            sinc_min_low_hz: float,
+            sinc_min_band_hz: Optional[float],
+            sinc_init_scale: str,
+            use_pswish: bool,
+            branch_dropout_prob: float = 0.0,
+    ):
+        super().__init__()
+        if target_branch not in branch_layers:
+            raise ValueError(f"target branch {target_branch!r} is not in {list(branch_layers)}")
+
+        self.target_branch = target_branch
+        self.branch_dropout_prob = float(branch_dropout_prob)
+        self.branches = tnn.ModuleDict(
+            {
+                name: ConvFeatureExtractionModel(
+                    conv_layers=layers,
+                    dropout=dropout,
+                    mode=mode,
+                    conv_bias=conv_bias,
+                    sinc_input=sinc_input,
+                    apply_window_to_root=apply_window_to_root,
+                    sample_rate=sample_rate,
+                    sinc_norm=sinc_norm,
+                    sinc_min_low_hz=sinc_min_low_hz,
+                    sinc_min_band_hz=sinc_min_band_hz,
+                    sinc_init_scale=sinc_init_scale,
+                    use_pswish=use_pswish,
+                )
+                for name, layers in branch_layers.items()
+            }
+        )
+
+    def forward(self, x):
+        outputs = {name: branch(x) for name, branch in self.branches.items()}
+        if self.training and self.branch_dropout_prob > 0 and len(outputs) > 1:
+            if torch.rand((), device=x.device) < self.branch_dropout_prob:
+                drop_idx = int(torch.randint(len(outputs), (), device=x.device).item())
+                drop_name = list(outputs.keys())[drop_idx]
+                outputs[drop_name] = outputs[drop_name].new_zeros(outputs[drop_name].shape)
+
+        target_steps = outputs[self.target_branch].size(-1)
+        aligned = []
+        for name in self.branches:
+            branch_x = outputs[name]
+            if branch_x.size(-1) != target_steps:
+                branch_x = F.interpolate(
+                    branch_x,
+                    size=target_steps,
+                    mode="linear",
+                    align_corners=False,
+                )
+            aligned.append(branch_x)
+        return torch.cat(aligned, dim=1)
+
+
+def _eval_conv_layers(spec: str):
+    return eval(spec)
+
+
+def _resolve_multires_branch_layers(modality_cfg: D2vAudioConfig) -> Dict[str, list]:
+    default_layers = modality_cfg.conv_feature_layers
+    return {
+        "low": _eval_conv_layers(modality_cfg.low_branch_conv_feature_layers or default_layers),
+        "mid": _eval_conv_layers(modality_cfg.mid_branch_conv_feature_layers or default_layers),
+        "high": _eval_conv_layers(modality_cfg.high_branch_conv_feature_layers or default_layers),
+    }
 
 
 class AudioEncoder(ModalitySpecificEncoder):
@@ -65,20 +155,46 @@ class AudioEncoder(ModalitySpecificEncoder):
             task: Optional[FairseqTask],
     ):
 
-        self.feature_enc_layers = eval(modality_cfg.conv_feature_layers)
-        feature_embed_dim = self.feature_enc_layers[-1][0]
-
-        local_encoder = ConvFeatureExtractionModel(
-            conv_layers=self.feature_enc_layers,
-            dropout=0.0,
-            mode=modality_cfg.extractor_mode,
-            conv_bias=False,
-            sinc_input=modality_cfg.sinc_input,
-            apply_window_to_root=modality_cfg.apply_window_to_root,
-            sample_rate=modality_cfg.sample_rate,
-            sinc_norm=modality_cfg.sinc_norm,
-            use_pswish=modality_cfg.use_pswish,
-        )
+        self.feature_enc_layers = _eval_conv_layers(modality_cfg.conv_feature_layers)
+        frontend_type = str(modality_cfg.frontend_type).lower()
+        if frontend_type in {"single", "sinc_conv", "conv"}:
+            feature_embed_dim = self.feature_enc_layers[-1][0]
+            local_encoder = ConvFeatureExtractionModel(
+                conv_layers=self.feature_enc_layers,
+                dropout=0.0,
+                mode=modality_cfg.extractor_mode,
+                conv_bias=False,
+                sinc_input=modality_cfg.sinc_input,
+                apply_window_to_root=modality_cfg.apply_window_to_root,
+                sample_rate=modality_cfg.sample_rate,
+                sinc_norm=modality_cfg.sinc_norm,
+                sinc_min_low_hz=modality_cfg.sinc_min_low_hz,
+                sinc_min_band_hz=modality_cfg.sinc_min_band_hz,
+                sinc_init_scale=modality_cfg.sinc_init_scale,
+                use_pswish=modality_cfg.use_pswish,
+            )
+        elif frontend_type in {"marine_multi_resolution", "multi_resolution", "multires"}:
+            branch_layers = _resolve_multires_branch_layers(modality_cfg)
+            feature_embed_dim = sum(layers[-1][0] for layers in branch_layers.values())
+            local_encoder = MultiResolutionConvFeatureExtractionModel(
+                branch_layers=branch_layers,
+                target_branch=modality_cfg.multires_align_to,
+                dropout=0.0,
+                mode=modality_cfg.extractor_mode,
+                conv_bias=False,
+                sinc_input=modality_cfg.sinc_input,
+                apply_window_to_root=modality_cfg.apply_window_to_root,
+                sample_rate=modality_cfg.sample_rate,
+                sinc_norm=modality_cfg.sinc_norm,
+                sinc_min_low_hz=modality_cfg.sinc_min_low_hz,
+                sinc_min_band_hz=modality_cfg.sinc_min_band_hz,
+                sinc_init_scale=modality_cfg.sinc_init_scale,
+                use_pswish=modality_cfg.use_pswish,
+                branch_dropout_prob=modality_cfg.multires_branch_dropout_prob,
+            )
+            self.feature_enc_layers = branch_layers[modality_cfg.multires_align_to]
+        else:
+            raise ValueError(f"unsupported audio frontend_type={modality_cfg.frontend_type!r}")
 
         project_features = tnn.Sequential(
             TransposeLast(),

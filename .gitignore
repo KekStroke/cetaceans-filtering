@@ -37,3 +37,4 @@ data/voxaboxen/audio/*
 data/voxaboxen/annotations/*
 !data/voxaboxen/audio/.gitkeep
 !data/voxaboxen/annotations/.gitkeep
+ARCHITECTURE_WATKINS_ADAPTATION.md

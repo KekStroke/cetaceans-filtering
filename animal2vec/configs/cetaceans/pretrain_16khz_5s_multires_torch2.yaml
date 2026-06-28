@@ -1,0 +1,229 @@
+# @package _global_
+
+common:
+  cpu: false
+  tpu: false
+  seed: 1
+  fp16: false
+  bf16: true
+  memory_efficient_fp16: false
+  memory_efficient_bf16: false
+  amp: false
+  profile: false
+  reset_logging: false
+  suppress_crashes: false
+  model_parallel_size: 1
+  empty_cache_freq: 0
+  log_format: json
+  log_file: null
+  log_interval: 50
+  tensorboard_logdir: outputs/animal2vec/tensorboard/pretrain_16khz_5s_multires_torch2
+  min_loss_scale: 1e-6
+  fp16_no_flatten_grads: true
+  fp16_init_scale: 1
+
+checkpoint:
+  save_dir: outputs/animal2vec/checkpoints/pretrain_16khz_5s_multires_torch2
+  restore_file: checkpoint_last.pt
+  optimizer_overrides: "{}"
+  save_interval: 1
+  save_interval_updates: 1000
+  keep_interval_updates: 8
+  keep_interval_updates_pattern: -1
+  keep_best_checkpoints: -1
+  keep_last_epochs: 10
+  no_save: false
+  no_epoch_checkpoints: false
+  no_last_checkpoints: false
+  write_checkpoints_asynchronously: false
+  reset_dataloader: false
+  reset_lr_scheduler: false
+  reset_meters: false
+  reset_optimizer: false
+  patience: -1
+  best_checkpoint_metric: loss
+  maximize_best_checkpoint_metric: false
+
+task:
+  _name: audio_ccas
+  data: data/animal2vec/manifest
+  unique_labels: "['beep', 'synch', 'sn', 'cc', 'ld', 'oth', 'mo', 'al', 'soc', 'agg', 'eating', 'focal']"
+  conv_feature_layers: '[(127, 63, 1)] + [(512, 10, 5)] + [(512, 3, 2)] * 3 + [(512, 3, 1)] + [(512, 2, 1)] * 2'
+  max_sample_size: 80000
+  min_sample_size: 80000
+  sample_rate: 16000
+  normalize: true
+  with_labels: false
+  verbose_tensorboard_logging: false
+  enable_padding: false
+
+dataset:
+  num_workers: 8
+  data_buffer_size: 10
+  max_tokens: 320000
+  skip_invalid_size_inputs_valid_test: true
+  validate_interval: 25
+  validate_interval_updates: 10000
+  validate_after_updates: 0
+  required_batch_size_multiple: 1
+  disable_validation: true
+  curriculum: 0
+  train_subset: pretrain
+  valid_subset: valid_0
+
+distributed_training:
+  distributed_world_size: 1
+  distributed_num_procs: 1
+  distributed_rank: 0
+  distributed_backend: nccl
+  distributed_init_method: null
+  distributed_port: -1
+  device_id: 0
+  distributed_no_spawn: false
+  ddp_backend: legacy_ddp
+  nprocs_per_node: 1
+  pipeline_model_parallel: false
+  fp16: ${common.fp16}
+  memory_efficient_fp16: ${common.memory_efficient_fp16}
+  tpu: ${common.tpu}
+  find_unused_parameters: false
+  gradient_as_bucket_view: false
+  broadcast_buffers: false
+  bucket_cap_mb: 25
+  heartbeat_timeout: -1
+  slowmo_momentum: null
+  slowmo_base_algorithm: localsgd
+  localsgd_frequency: 3
+  zero_sharding: none
+  cpu_offload: false
+  use_sharded_state: false
+  not_fsdp_flatten_parameters: false
+
+criterion:
+  _name: expanded_model
+  segmentation_metrics: true
+  use_focal_loss: true
+  log_keys:
+    - ema_decay
+    - target_var
+    - pred_var
+    - model_norm
+    - ema_norm
+    - masked_pct
+
+optimization:
+  lr: [0.0001]
+  update_freq: [10]
+  max_epoch: 1
+  max_update: 120000
+  stop_min_lr: -1.0
+  stop_time_hours: 0.0
+  clip_norm: 1.0
+  skip_remainder_batch: false
+
+optimizer:
+  _name: adam
+  adam_betas: [0.9, 0.98]
+  adam_eps: 1e-06
+  weight_decay: 0.01
+  use_old_adam: false
+  fp16_adam_stats: false
+  tpu: false
+  lr: [0.0001]
+
+lr_scheduler:
+  _name: cosine
+  warmup_updates: 10000
+  warmup_init_lr: -1.0
+  lr: [0.0001]
+  min_lr: 0.0
+  t_mult: 1.0
+  lr_period_updates: -1.0
+  lr_shrink: 0.1
+  max_update: 120000
+
+ema:
+  store_ema: false
+
+model:
+  _name: data2vec_multi
+  loss_beta: 0
+  loss_scale: null
+  torch_compile: false
+  torch_compile_backend: inductor
+  torch_compile_scope: full
+  torch_compile_mode: reduce-overhead
+  torch_compile_fullgraph: false
+  torch_compile_dynamic: true
+  torch_compile_suppress_errors: true
+
+  depth: 16
+  embed_dim: 1024
+  num_heads: 16
+
+  clone_batch: 3
+
+  ema_decay: 0.9997
+  ema_end_decay: 1
+  ema_anneal_end_step: 300000
+  ema_encoder_only: false
+
+  average_top_k_layers: 16
+  instance_norm_target_layer: true
+  layer_norm_target_layer: false
+  layer_norm_targets: false
+
+  layerdrop: 0
+  norm_eps: 1e-5
+
+  supported_modality: AUDIO
+  target_mixup: false
+  source_mixup: 0.5
+  mixup_prob: 1.0
+  same_mixup: true
+  mixing_window_length: 0.05
+  gain_mode: A_weighting
+
+  modalities:
+    audio:
+      sample_rate: 16000
+      frontend_type: marine_multi_resolution
+      multires_align_to: mid
+      low_branch_conv_feature_layers: '[(256, 127, 1)] + [(256, 10, 5)] + [(256, 3, 2)] * 3 + [(256, 3, 1)] + [(256, 2, 1)] * 2'
+      mid_branch_conv_feature_layers: '[(256, 63, 1)] + [(256, 10, 5)] + [(256, 3, 2)] * 3 + [(256, 3, 1)] + [(256, 2, 1)] * 2'
+      high_branch_conv_feature_layers: '[(256, 31, 1)] + [(256, 10, 5)] + [(256, 3, 2)] * 3 + [(256, 3, 1)] + [(256, 2, 1)] * 2'
+      multires_branch_dropout_prob: 0.15
+      sinc_input: true
+      apply_window_to_root: false
+      use_pswish: true
+      sinc_norm: layer_norm
+      sinc_min_low_hz: 5
+      sinc_min_band_hz: null
+      sinc_init_scale: mel
+      conv_pos_depth: 5
+      conv_pos_width: 95
+      conv_pos_groups: 16
+      prenet_depth: 8
+      mask_prob: 1.5
+      mask_length: 2
+      # 16 kHz with the current frontend stride is about 2.5 ms per feature frame.
+      # Mixed mode overlays roughly 5 ms, 40 ms, 200 ms, and 500 ms masks.
+      mask_scale_mode: mixed
+      mask_scales: "[(2, 0.45), (16, 0.25), (80, 0.12), (200, 0.06)]"
+      mask_prob_adjust: 0.05
+      inverse_mask: false
+      mask_noise_std: 0.01
+      mask_dropout: 0
+      add_masks: false
+      ema_local_encoder: false
+      use_alibi_encoder: true
+      prenet_layerdrop: 0
+      prenet_dropout: 0.1
+      learned_alibi_scale: true
+      learned_alibi_scale_per_head: true
+      decoder:
+        input_dropout: 0.1
+        decoder_dim: 768
+        decoder_groups: 16
+        decoder_kernel: 7
+        decoder_layers: 4
