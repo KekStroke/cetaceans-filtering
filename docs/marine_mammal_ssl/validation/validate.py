@@ -3,22 +3,35 @@
 animal2vec checkpoint validation — single turnkey CLI (modern torch 2.x + GPU; lossless by weights).
 
 Loads a data2vec_multi pretraining checkpoint and runs frozen-probe validation. One subcommand per task;
-each loads ONE model in the process (memory-safe: 10s/8kHz input cap, slim checkpoint, no second model).
+each loads ONE model in the process (memory-safe: 80000-sample input cap, slim checkpoint, no second model).
+The input sample rate is auto-detected from the checkpoint (8 kHz vs 16 kHz), so the same commands work for
+both; SHAP bands then span 0..Nyquist. Override with A2V_SR if a checkpoint omits the rate.
 
   python validate.py watkins  <ckpt> [--run R --step S] [--no-baselines]   # 31-way species + clustering
   python validate.py filter   <ckpt> [--run R --step S] [--no-baselines]   # binary signal/noise
   python validate.py shap     <ckpt>                                       # frequency-band attribution + PNG
   python validate.py kclass   <ckpt>                                       # per-layer probe on Olga K-class
   python validate.py dynamics                                              # plot accumulated runs/steps
+  python validate.py watch    <save_dir> --run R [--device 0]              # live: preserve+validate new ckpts, track BEST
 
 Env (override the defaults): A2V_REPO (~/a2v), A2V_OUT (./a2v_val_results), A2V_KCLASS, A2V_WATKINS,
-A2V_AVES. Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
+A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap in samples, default 80000).
+Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
   cd ~/a2v && ~/a2v_env/bin/python /path/validate.py watkins ~/a2v_ckpts/ckpt25k_slim.pt
 """
-import os, sys, glob, json, time, types, re, argparse, collections, tempfile
+import os, sys, glob, json, time, types, re, argparse, collections, tempfile, warnings
 import numpy as np
 
-SR = 8000
+# The lbfgs probe rarely hits tol within max_iter on high-dim (1024) embeddings, so sklearn spams a
+# ConvergenceWarning per fit. The macro-F1 *ranking* is stable regardless (every checkpoint is probed the
+# same way), so silence it rather than bump max_iter — changing max_iter mid-curve would break the
+# step-over-step comparability of an accumulating dynamics run.
+warnings.filterwarnings("ignore", message="lbfgs failed to converge")
+
+SR = int(os.environ.get("A2V_SR", 8000))   # model input sample rate; auto-detected from the ckpt in load_model
+_SR_FORCED = "A2V_SR" in os.environ        # if the user pinned A2V_SR, don't override it from the checkpoint
+MAXLEN = int(os.environ.get("A2V_MAXLEN", 80000))  # hard input cap in SAMPLES (=10s@8k =5s@16k): matches the
+#                                                    train window and caps O(T^2) attention memory at any SR
 # determinism: cuBLAS workspace must be set BEFORE CUDA initialises (this runs at import, before T())
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
@@ -33,6 +46,28 @@ def load_json(name, default):
     try: return json.load(open(p))
     except Exception: return default
 def save_json(name, obj): json.dump(obj, open(outp(name), "w"), indent=2)
+
+def _detect_set_sr(cfg):
+    """Set the global SR from the checkpoint's sample_rate so 16 kHz models get 16 kHz input (the sinc
+    kernels are rate-specific — feeding 8 kHz audio to a 16 kHz model misreads every frequency by 2x).
+    cfg = ck['cfg']. Env A2V_SR (if set) wins. Returns the SR in use."""
+    global SR
+    if _SR_FORCED:
+        return SR
+    rate = None
+    for path in (("task", "sample_rate"), ("model", "sample_rate"),
+                 ("model", "modalities", "audio", "sample_rate")):
+        c = cfg
+        try:
+            for k in path:
+                c = c.get(k) if hasattr(c, "get") else c[k]
+            if c: rate = int(c); break
+        except Exception:
+            continue
+    if rate and rate != SR:
+        log(f"sample_rate {rate} Hz from checkpoint (was {SR}); using {rate} Hz")
+        SR = rate
+    return SR
 
 # ======================= model loader (lazy: only when a checkpoint is needed) =======================
 _T = None
@@ -89,6 +124,7 @@ def sanitize_and_save(src, dst):
     log("loading checkpoint for sanitize ...")
     ck = T().load(src, map_location='cpu', weights_only=False)
     cfg = ck['cfg']
+    _detect_set_sr(cfg)   # pick up the model's sample rate (8k vs 16k) before any audio is loaded
     from nn.audio_tasks import AudioConfigCCAS
     try:
         from nn.data2vec2 import Data2VecMultiConfig
@@ -142,13 +178,13 @@ def load_model(ckpt):
     log(f"model on {DEV()}: {type(m).__name__}, {sum(p.numel() for p in m.parameters())/1e6:.0f}M params")
     return m
 
-def norm_wav(y, sr, maxsec=10):
+def norm_wav(y, sr):
     y = np.asarray(y, dtype=np.float32)
     if y.ndim > 1: y = y.mean(1)
-    nmax = maxsec * sr
+    nmax = int(MAXLEN * sr / SR)                       # native-sample budget = MAXLEN at the model SR (center-crop first)
     if len(y) > nmax: s = (len(y) - nmax) // 2; y = y[s:s + nmax]
     if sr != SR: import librosa; y = librosa.resample(y, orig_sr=sr, target_sr=SR)
-    if len(y) > maxsec * SR: y = y[:maxsec * SR]
+    if len(y) > MAXLEN: y = y[:MAXLEN]                 # hard cap in samples (memory-safe at any SR)
     if len(y) < 400: y = np.pad(y, (0, 400 - len(y)))
     y = y - y.mean(); st = y.std(); return (y / (st + 1e-8) if st > 1e-8 else y).astype(np.float32)
 
@@ -330,12 +366,12 @@ def task_shap(a):
     from scipy.signal import butter, sosfiltfilt
     from sklearn.preprocessing import StandardScaler, LabelEncoder
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-    NB = 8; BANDS = [(i * 500, (i + 1) * 500) for i in range(NB)]
     nper = getattr(a, "limit", 0) or 100; nocc = min(10, getattr(a, "limit", 0) or 10)
     items = gather_kclass(KCLASS, nper)
     files = [f for f, _, _ in items]
     le = LabelEncoder(); y = le.fit_transform([c for _, c, _ in items]); groups = np.array([g for _, _, g in items]); classes = list(le.classes_)
-    model = load_model(a.ckpt)
+    model = load_model(a.ckpt)   # sets SR (8k vs 16k) -> band grid spans up to the model's Nyquist
+    NB = max(8, int((SR / 2) // 500)); BANDS = [(i * 500, (i + 1) * 500) for i in range(NB)]  # 0..SR/2 in 0.5 kHz steps
     XL = None
     for i, f in enumerate(files):
         fs = emb_layers(model, load_wav(f))
@@ -405,6 +441,77 @@ def task_dynamics(a):
     plt.tight_layout(); plt.savefig(outp("dynamics.png"), dpi=120)
     log(f"DYNAMICS saved {outp('dynamics.png')} ({sum(len(v) for v in runs.values())} points, {len(runs)} runs)")
 
+def _prune_preserved(keep_dir, keep_best, pat):
+    """Keep the top-`keep_best` preserved checkpoints by Watkins-F1 plus the `keep_best` most recent
+    (the true peak may be ahead) + whatever BEST.pt points at; unlink the rest to bound disk."""
+    files = [f for f in glob.glob(os.path.join(keep_dir, "checkpoint_*_*.pt")) if pat.search(os.path.basename(f))]
+    if len(files) <= keep_best * 2: return
+    res = load_json("watkins_results.json", {})
+    f1 = lambda f: (res.get(_tag(f), {}).get("best_macro_f1") or -1.0)
+    step = lambda f: int(pat.search(os.path.basename(f)).group(2))
+    keep = set(sorted(files, key=f1, reverse=True)[:keep_best]) | set(sorted(files, key=step, reverse=True)[:keep_best])
+    link = os.path.join(keep_dir, "BEST.pt")
+    if os.path.lexists(link): keep.add(os.path.join(keep_dir, os.readlink(link)))
+    for f in files:
+        if f in keep: continue
+        try: os.remove(f); log(f"watch: pruned {os.path.basename(f)} (F1={f1(f):.3f})")
+        except OSError: pass
+
+def task_watch(a):
+    """Watch a live training save_dir. For each new checkpoint: (1) hard-link it aside immediately so the
+    `keep_interval_updates` rotation can't delete the peak (what bit us last time); (2) validate it in a fresh
+    subprocess (one model per process = memory-safe); (3) track the best Watkins-F1 (BEST.pt) and refresh
+    dynamics.png. Fully decoupled — it never touches the training process."""
+    import subprocess, shutil
+    save_dir = os.path.abspath(a.save_dir)
+    keep_dir = a.preserve or os.path.join(save_dir, "validated"); os.makedirs(keep_dir, exist_ok=True)
+    pat = re.compile(r"checkpoint_(\d+)_(\d+)\.pt$")
+    seen = set(); best = {"f1": -1.0, "step": None, "name": None}; idle = 0
+    reg = load_json("dynamics_registry.json", {}); wk = load_json("watkins_results.json", {})  # restart-safe
+    for tag, meta in reg.items():
+        if meta.get("run") == a.run and tag in wk:
+            seen.add(int(meta["step"]))
+            if (wk[tag].get("best_macro_f1") or -1) > best["f1"]:
+                best.update(f1=wk[tag]["best_macro_f1"], step=int(meta["step"]), name=tag + ".pt")
+    log(f"watch: {save_dir} -> {keep_dir} | run={a.run} poll={a.poll}s device={a.device} | {len(seen)} already done")
+    while True:
+        cands = sorted((int(m.group(2)), ck) for ck in glob.glob(os.path.join(save_dir, "checkpoint_*_*.pt"))
+                       for m in [pat.search(os.path.basename(ck))] if m and int(m.group(2)) not in seen)
+        for step, ck in cands:
+            dst = os.path.join(keep_dir, os.path.basename(ck))
+            if not os.path.exists(dst):                                   # 1) PRESERVE before rotation can delete it
+                try: os.link(ck, dst)
+                except OSError:
+                    try: shutil.copy2(ck, dst)
+                    except OSError as e: log(f"watch: preserve failed step {step}: {e}"); continue
+            log(f"watch: preserved + validating step {step}")
+            env = dict(os.environ)                                        # 2) VALIDATE in a fresh process (frees GPU on exit)
+            if a.device is not None: env["CUDA_VISIBLE_DEVICES"] = str(a.device)
+            cmd = [sys.executable, os.path.abspath(__file__), "watkins", dst, "--run", a.run, "--step", str(step)]
+            if not a.baselines: cmd.append("--no-baselines")
+            if a.limit: cmd += ["--limit", str(a.limit)]
+            rc = subprocess.run(cmd, env=env).returncode
+            seen.add(step)
+            if rc != 0: log(f"watch: validate rc={rc} step {step} (checkpoint kept; no metric)"); continue
+            f1 = load_json("watkins_results.json", {}).get(_tag(dst), {}).get("best_macro_f1")  # 3) track best
+            if f1 is not None and f1 > best["f1"]:
+                best.update(f1=f1, step=step, name=os.path.basename(dst))
+                link = os.path.join(keep_dir, "BEST.pt")
+                try:
+                    if os.path.lexists(link): os.remove(link)
+                    os.symlink(os.path.basename(dst), link)
+                except OSError: pass
+                log(f"watch: ** NEW BEST step {step} F1={f1:.4f} **")
+            subprocess.run([sys.executable, os.path.abspath(__file__), "dynamics"], env=env)
+            if a.keep_best: _prune_preserved(keep_dir, a.keep_best, pat)
+        if cands:
+            idle = 0; log(f"watch: best so far step {best['step']} F1={best['f1']:.4f} ({len(seen)} validated)")
+        else:
+            idle += 1
+            if a.max_idle and idle >= a.max_idle:
+                log(f"watch: {idle} idle polls — stopping. BEST step {best['step']} F1={best['f1']:.4f} -> {keep_dir}/BEST.pt"); break
+        time.sleep(a.poll)
+
 def task_slim(a):
     """raw ~5GB training checkpoint -> ~1.3GB inference checkpoint (strip optimizer + EMA, sanitize cfg)."""
     _setup_fairseq()
@@ -438,9 +545,18 @@ def main():
     kc = sub.add_parser("kclass"); add_ckpt(kc); kc.add_argument("--n-per-class", type=int, default=100)
     sl = sub.add_parser("slim"); sl.add_argument("ckpt"); sl.add_argument("--out", default=None, help="output path (default <ckpt>_slim.pt)")
     sub.add_parser("dynamics")
+    wt = sub.add_parser("watch"); wt.add_argument("save_dir", help="live training checkpoint dir to watch")
+    wt.add_argument("--run", required=True, help="run label for the dynamics curve")
+    wt.add_argument("--poll", type=int, default=120, help="seconds between scans")
+    wt.add_argument("--device", default=None, help="CUDA_VISIBLE_DEVICES for the validation subprocess (e.g. 0)")
+    wt.add_argument("--preserve", default=None, help="dir to hard-link checkpoints into (default <save_dir>/validated)")
+    wt.add_argument("--keep-best", type=int, default=5, help="prune preserved/ to top-N by F1 + N most-recent (0=keep all)")
+    wt.add_argument("--max-idle", type=int, default=0, help="stop after N idle polls with no new checkpoint (0=forever)")
+    wt.add_argument("--limit", type=int, default=0, help="cap clips/split for faster (approximate) live validation")
+    wt.add_argument("--no-baselines", dest="baselines", action="store_false"); wt.set_defaults(baselines=True)
     a = ap.parse_args()
     {"watkins": task_watkins, "filter": task_filter, "shap": task_shap, "kclass": task_kclass,
-     "slim": task_slim, "dynamics": task_dynamics}[a.cmd](a)
+     "slim": task_slim, "dynamics": task_dynamics, "watch": task_watch}[a.cmd](a)
 
 if __name__ == "__main__":
     main()
