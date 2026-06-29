@@ -15,7 +15,8 @@ both; SHAP bands then span 0..Nyquist. Override with A2V_SR if a checkpoint omit
   python validate.py watch    <save_dir> --run R [--device 0]              # live: preserve+validate new ckpts, track BEST
 
 Env (override the defaults): A2V_REPO (~/a2v), A2V_OUT (./a2v_val_results), A2V_KCLASS, A2V_WATKINS,
-A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap in samples, default 80000).
+A2V_AVES, A2V_SR (force input rate; default auto-detect), A2V_MAXLEN (input cap in samples, default 80000),
+A2V_TENSORBOARD_LOGDIR (validation scalar logdir; default A2V_OUT/tensorboard/<run> when --run is set).
 Run with the legacy-fairseq GPU env, from the a2v repo dir, e.g.:
   cd ~/a2v && ~/a2v_env/bin/python /path/validate.py watkins ~/a2v_ckpts/ckpt25k_slim.pt
 """
@@ -46,6 +47,35 @@ def load_json(name, default):
     try: return json.load(open(p))
     except Exception: return default
 def save_json(name, obj): json.dump(obj, open(outp(name), "w"), indent=2)
+
+def _numeric_scalars(prefix, obj):
+    if isinstance(obj, (int, float, np.integer, np.floating)) and np.isfinite(obj):
+        yield prefix, float(obj)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(k)).strip("_")
+            yield from _numeric_scalars(f"{prefix}/{key}" if prefix else key, v)
+
+def _write_tensorboard(task, a, res, headline):
+    run = getattr(a, "run", None)
+    step = getattr(a, "step", None)
+    if not run or step is None:
+        return
+    root = os.environ.get("A2V_TENSORBOARD_LOGDIR") or os.path.join(OUT, "tensorboard")
+    logdir = os.path.join(root, str(run))
+    try:
+        from torch.utils.tensorboard import SummaryWriter
+        writer = SummaryWriter(logdir)
+        try:
+            if isinstance(headline, (int, float, np.integer, np.floating)) and np.isfinite(headline):
+                writer.add_scalar(f"validation/{task}/score", float(headline), int(step))
+            for name, value in _numeric_scalars(f"validation/{task}", res):
+                writer.add_scalar(name, value, int(step))
+            writer.flush()
+        finally:
+            writer.close()
+    except Exception as e:
+        log(f"tensorboard: skipped scalar write to {logdir}: {e}")
 
 def _detect_set_sr(cfg):
     """Set the global SR from the checkpoint's sample_rate so 16 kHz models get 16 kHz input (the sinc
@@ -98,7 +128,7 @@ def _setup_fairseq():
         except (ValueError, TypeError): return
         setattr(mod, fn, lambda *a, **k: orig(*a, **{x: y for x, y in k.items() if x in sig}))
     try:
-        import nn.modalities.base as nb; swallow(nb, "compute_mask_indices")
+        import animal2vec.nn.modalities.base as nb; swallow(nb, "compute_mask_indices")
     except Exception as e:
         log(f"mask-indices patch skipped: {e}")
 
@@ -125,9 +155,9 @@ def sanitize_and_save(src, dst):
     ck = T().load(src, map_location='cpu', weights_only=False)
     cfg = ck['cfg']
     _detect_set_sr(cfg)   # pick up the model's sample rate (8k vs 16k) before any audio is loaded
-    from nn.audio_tasks import AudioConfigCCAS
+    from animal2vec.nn.audio_tasks import AudioConfigCCAS
     try:
-        from nn.data2vec2 import Data2VecMultiConfig
+        from animal2vec.nn.data2vec2 import Data2VecMultiConfig
         sections = [('task', AudioConfigCCAS), ('model', Data2VecMultiConfig)]
     except Exception:
         sections = [('task', AudioConfigCCAS)]
@@ -205,18 +235,26 @@ def emb_layers(model, wav):
         return feats
 
 # ======================= data + probe helpers =======================
-def class_of(name): return 'noise' if name.startswith('noise') else name.split('-')[0]
+def class_of(path):
+    parent = os.path.basename(os.path.dirname(path))
+    if parent.startswith("K") or parent == "noise":
+        return parent
+    name = os.path.basename(path)
+    return 'noise' if name.startswith('noise') else name.split('-')[0]
 def tape_key(p):
     parts = os.path.basename(p)[:-4].split('_'); return parts[3] if len(parts) >= 4 else os.path.basename(p)
-def gather_kclass(lab_dir, n_per_class):
-    CLASSES = ['K1','K10','K12','K13','K14','K17','K21','K27','K4','K5','K7','noise']
-    files = sorted(glob.glob(f"{lab_dir}/*.wav"))
+def gather_kclass(lab_dir, n_per_class, include_noise=True):
+    files = sorted(glob.glob(os.path.join(lab_dir, "**", "*.wav"), recursive=True))
     if not files:
         raise SystemExit(f"no .wav files under A2V_KCLASS={lab_dir!r} — point A2V_KCLASS at your K-class clip dir")
     by = collections.defaultdict(list)
     for f in files:
-        c = class_of(os.path.basename(f))
-        if c in set(CLASSES): by[c].append(f)
+        c = class_of(f)
+        if c == "noise" or c.startswith("K"):
+            by[c].append(f)
+    CLASSES = sorted([c for c in by if c != "noise"], key=lambda x: int(x[1:]) if x[1:].isdigit() else x)
+    if include_noise and "noise" in by:
+        CLASSES.append("noise")
     rng = np.random.RandomState(42); items = []
     for c in CLASSES:
         fs = by[c][:]; rng.shuffle(fs)
@@ -313,7 +351,7 @@ def task_watkins(a):
         + (f" | AVES-8k {res['baselines']['AVES_8k']:.3f} logmel-8k {res['baselines']['logmel_8k']:.3f}" if a.baselines else ""))
 
 def task_filter(a):
-    items = gather_kclass(KCLASS, 700)
+    items = gather_kclass(KCLASS, 700, include_noise=True)
     sig = [(f, g) for f, c, g in items if c != "noise"]; noi = [(f, g) for f, c, g in items if c == "noise"]
     cap = getattr(a, "limit", 0) or 500
     rng = np.random.RandomState(0); rng.shuffle(sig); rng.shuffle(noi); sig = sig[:cap]; noi = noi[:cap]
@@ -343,8 +381,8 @@ def task_filter(a):
         + (f" | AVES-8k {res['baselines']['AVES_8k']:.3f} logmel-8k {res['baselines']['logmel_8k']:.3f}" if a.baselines else ""))
 
 def task_kclass(a):
-    """per-layer frozen probe on Olga K-class (12-way) — the layer sweep."""
-    items = gather_kclass(KCLASS, a.n_per_class)
+    """per-layer frozen probe on Olga K-class call types — the layer sweep."""
+    items = gather_kclass(KCLASS, a.n_per_class, include_noise=False)
     files = [f for f, _, _ in items]
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder(); y = le.fit_transform([c for _, c, _ in items]); groups = np.array([g for _, _, g in items])
@@ -358,8 +396,9 @@ def task_kclass(a):
     XL = [np.stack(p) for p in XL]
     per = {("final" if li == len(XL) - 1 else f"L{li}"): probe_cv(X, y, groups)["macro_f1"] for li, X in enumerate(XL)}
     best = max(per, key=per.get)
-    save_json(f"kclass_{_tag(a.ckpt)}.json", {"per_layer": per, "best_layer": best, "best_macro_f1": per[best]})
-    log(f"KCLASS best {best} macro-F1={per[best]:.3f} (12-way; chance ~0.08)")
+    res = {"per_layer": per, "best_layer": best, "best_macro_f1": per[best], "n_classes": len(le.classes_)}
+    _record("kclass", a, res, per[best])
+    log(f"KCLASS best {best} macro-F1={per[best]:.3f} ({len(le.classes_)}-way; chance ~{1/len(le.classes_):.2f})")
 
 def task_shap(a):
     """occlusion frequency-band attribution on the best K-class layer."""
@@ -441,75 +480,153 @@ def task_dynamics(a):
     plt.tight_layout(); plt.savefig(outp("dynamics.png"), dpi=120)
     log(f"DYNAMICS saved {outp('dynamics.png')} ({sum(len(v) for v in runs.values())} points, {len(runs)} runs)")
 
-def _prune_preserved(keep_dir, keep_best, pat):
-    """Keep the top-`keep_best` preserved checkpoints by Watkins-F1 plus the `keep_best` most recent
-    (the true peak may be ahead) + whatever BEST.pt points at; unlink the rest to bound disk."""
+def _task_scores(tag):
+    wk = load_json("watkins_results.json", {}).get(tag, {})
+    kc = load_json("kclass_results.json", {}).get(tag, {})
+    fl = load_json("filter_results.json", {}).get(tag, {})
+    return {
+        "watkins": wk.get("best_macro_f1"),
+        "kclass": kc.get("best_macro_f1"),
+        "filter": (fl.get("best") or {}).get("macro_f1") if isinstance(fl, dict) else None,
+    }
+
+def _composite_score(scores, weights):
+    total = 0.0
+    for task, weight in weights.items():
+        value = scores.get(task)
+        if value is None:
+            return None
+        total += float(weight) * float(value)
+    return total
+
+def _set_best_link(keep_dir, link_name, target_name):
+    link = os.path.join(keep_dir, link_name)
+    try:
+        if os.path.lexists(link): os.remove(link)
+        os.symlink(target_name, link)
+    except OSError:
+        pass
+
+def _best_link_targets(keep_dir):
+    targets = set()
+    for name in ("BEST.pt", "BEST_WATKINS.pt", "BEST_KCLASS.pt", "BEST_FILTER.pt", "BEST_COMPOSITE.pt"):
+        link = os.path.join(keep_dir, name)
+        if os.path.lexists(link):
+            targets.add(os.path.join(keep_dir, os.readlink(link)))
+    return targets
+
+def _prune_preserved(keep_dir, keep_best, pat, weights):
+    """Keep top composite-score checkpoints plus the most recent checkpoints and all BEST_* targets."""
     files = [f for f in glob.glob(os.path.join(keep_dir, "checkpoint_*_*.pt")) if pat.search(os.path.basename(f))]
     if len(files) <= keep_best * 2: return
-    res = load_json("watkins_results.json", {})
-    f1 = lambda f: (res.get(_tag(f), {}).get("best_macro_f1") or -1.0)
+    score = lambda f: (_composite_score(_task_scores(_tag(f)), weights) or -1.0)
     step = lambda f: int(pat.search(os.path.basename(f)).group(2))
-    keep = set(sorted(files, key=f1, reverse=True)[:keep_best]) | set(sorted(files, key=step, reverse=True)[:keep_best])
-    link = os.path.join(keep_dir, "BEST.pt")
-    if os.path.lexists(link): keep.add(os.path.join(keep_dir, os.readlink(link)))
+    keep = set(sorted(files, key=score, reverse=True)[:keep_best]) | set(sorted(files, key=step, reverse=True)[:keep_best])
+    keep |= _best_link_targets(keep_dir)
     for f in files:
         if f in keep: continue
-        try: os.remove(f); log(f"watch: pruned {os.path.basename(f)} (F1={f1(f):.3f})")
+        try: os.remove(f); log(f"watch: pruned {os.path.basename(f)} (composite={score(f):.3f})")
         except OSError: pass
 
 def task_watch(a):
-    """Watch a live training save_dir. For each new checkpoint: (1) hard-link it aside immediately so the
-    `keep_interval_updates` rotation can't delete the peak (what bit us last time); (2) validate it in a fresh
-    subprocess (one model per process = memory-safe); (3) track the best Watkins-F1 (BEST.pt) and refresh
-    dynamics.png. Fully decoupled — it never touches the training process."""
+    """Watch live training checkpoints, validate Watkins/K-class/filter, and track per-task plus composite bests."""
     import subprocess, shutil
     save_dir = os.path.abspath(a.save_dir)
     keep_dir = a.preserve or os.path.join(save_dir, "validated"); os.makedirs(keep_dir, exist_ok=True)
     pat = re.compile(r"checkpoint_(\d+)_(\d+)\.pt$")
-    seen = set(); best = {"f1": -1.0, "step": None, "name": None}; idle = 0
+    weights = {"watkins": a.weight_watkins, "kclass": a.weight_kclass, "filter": a.weight_filter}
+    seen = set()
+    best = {
+        "watkins": {"score": -1.0, "step": None, "name": None},
+        "kclass": {"score": -1.0, "step": None, "name": None},
+        "filter": {"score": -1.0, "step": None, "name": None},
+        "composite": {"score": -1.0, "step": None, "name": None},
+    }
+    idle = 0
     reg = load_json("dynamics_registry.json", {}); wk = load_json("watkins_results.json", {})  # restart-safe
     for tag, meta in reg.items():
         if meta.get("run") == a.run and tag in wk:
             seen.add(int(meta["step"]))
-            if (wk[tag].get("best_macro_f1") or -1) > best["f1"]:
-                best.update(f1=wk[tag]["best_macro_f1"], step=int(meta["step"]), name=tag + ".pt")
-    log(f"watch: {save_dir} -> {keep_dir} | run={a.run} poll={a.poll}s device={a.device} | {len(seen)} already done")
+            scores = _task_scores(tag)
+            for task in ("watkins", "kclass", "filter"):
+                if scores.get(task) is not None and scores[task] > best[task]["score"]:
+                    best[task].update(score=scores[task], step=int(meta["step"]), name=tag + ".pt")
+            composite = _composite_score(scores, weights)
+            if composite is not None and composite > best["composite"]["score"]:
+                best["composite"].update(score=composite, step=int(meta["step"]), name=tag + ".pt")
+    for task, link_name in (
+        ("watkins", "BEST_WATKINS.pt"),
+        ("kclass", "BEST_KCLASS.pt"),
+        ("filter", "BEST_FILTER.pt"),
+        ("composite", "BEST_COMPOSITE.pt"),
+    ):
+        if best[task]["name"] and os.path.exists(os.path.join(keep_dir, best[task]["name"])):
+            _set_best_link(keep_dir, link_name, best[task]["name"])
+    if best["composite"]["name"] and os.path.exists(os.path.join(keep_dir, best["composite"]["name"])):
+        _set_best_link(keep_dir, "BEST.pt", best["composite"]["name"])
+    log(f"watch: {save_dir} -> {keep_dir} | run={a.run} poll={a.poll}s device={a.device} | weights={weights} | {len(seen)} already done")
     while True:
         cands = sorted((int(m.group(2)), ck) for ck in glob.glob(os.path.join(save_dir, "checkpoint_*_*.pt"))
                        for m in [pat.search(os.path.basename(ck))] if m and int(m.group(2)) not in seen)
         for step, ck in cands:
             dst = os.path.join(keep_dir, os.path.basename(ck))
-            if not os.path.exists(dst):                                   # 1) PRESERVE before rotation can delete it
+            if not os.path.exists(dst):
                 try: os.link(ck, dst)
                 except OSError:
                     try: shutil.copy2(ck, dst)
                     except OSError as e: log(f"watch: preserve failed step {step}: {e}"); continue
             log(f"watch: preserved + validating step {step}")
-            env = dict(os.environ)                                        # 2) VALIDATE in a fresh process (frees GPU on exit)
+            env = dict(os.environ)
             if a.device is not None: env["CUDA_VISIBLE_DEVICES"] = str(a.device)
+            if a.tensorboard_logdir: env["A2V_TENSORBOARD_LOGDIR"] = a.tensorboard_logdir
             cmd = [sys.executable, os.path.abspath(__file__), "watkins", dst, "--run", a.run, "--step", str(step)]
             if not a.baselines: cmd.append("--no-baselines")
             if a.limit: cmd += ["--limit", str(a.limit)]
             rc = subprocess.run(cmd, env=env).returncode
             seen.add(step)
             if rc != 0: log(f"watch: validate rc={rc} step {step} (checkpoint kept; no metric)"); continue
-            f1 = load_json("watkins_results.json", {}).get(_tag(dst), {}).get("best_macro_f1")  # 3) track best
-            if f1 is not None and f1 > best["f1"]:
-                best.update(f1=f1, step=step, name=os.path.basename(dst))
-                link = os.path.join(keep_dir, "BEST.pt")
-                try:
-                    if os.path.lexists(link): os.remove(link)
-                    os.symlink(os.path.basename(dst), link)
-                except OSError: pass
-                log(f"watch: ** NEW BEST step {step} F1={f1:.4f} **")
+            for task_cmd in (
+                ["kclass", dst, "--run", a.run, "--step", str(step), "--n-per-class", "100"],
+                ["filter", dst, "--run", a.run, "--step", str(step)],
+            ):
+                if not a.baselines and task_cmd[0] == "filter":
+                    task_cmd.append("--no-baselines")
+                task_rc = subprocess.run([sys.executable, os.path.abspath(__file__)] + task_cmd, env=env).returncode
+                if task_rc != 0:
+                    log(f"watch: {task_cmd[0]} rc={task_rc} step {step} (available metrics kept)")
+            scores = _task_scores(_tag(dst))
+            for task, link_name in (
+                ("watkins", "BEST_WATKINS.pt"),
+                ("kclass", "BEST_KCLASS.pt"),
+                ("filter", "BEST_FILTER.pt"),
+            ):
+                value = scores.get(task)
+                if value is not None and value > best[task]["score"]:
+                    best[task].update(score=value, step=step, name=os.path.basename(dst))
+                    _set_best_link(keep_dir, link_name, os.path.basename(dst))
+                    log(f"watch: ** NEW {link_name[:-3]} step {step} score={value:.4f} **")
+            composite = _composite_score(scores, weights)
+            if composite is not None and composite > best["composite"]["score"]:
+                best["composite"].update(score=composite, step=step, name=os.path.basename(dst))
+                _set_best_link(keep_dir, "BEST_COMPOSITE.pt", os.path.basename(dst))
+                _set_best_link(keep_dir, "BEST.pt", os.path.basename(dst))
+                log(f"watch: ** NEW BEST_COMPOSITE step {step} score={composite:.4f} "
+                    f"(watkins={scores['watkins']:.4f}, kclass={scores['kclass']:.4f}, filter={scores['filter']:.4f}) **")
             subprocess.run([sys.executable, os.path.abspath(__file__), "dynamics"], env=env)
-            if a.keep_best: _prune_preserved(keep_dir, a.keep_best, pat)
+            if a.keep_best: _prune_preserved(keep_dir, a.keep_best, pat, weights)
         if cands:
-            idle = 0; log(f"watch: best so far step {best['step']} F1={best['f1']:.4f} ({len(seen)} validated)")
+            idle = 0
+            log("watch: best so far "
+                f"composite step {best['composite']['step']} score={best['composite']['score']:.4f}; "
+                f"watkins step {best['watkins']['step']} score={best['watkins']['score']:.4f}; "
+                f"kclass step {best['kclass']['step']} score={best['kclass']['score']:.4f}; "
+                f"filter step {best['filter']['step']} score={best['filter']['score']:.4f}; "
+                f"({len(seen)} validated)")
         else:
             idle += 1
             if a.max_idle and idle >= a.max_idle:
-                log(f"watch: {idle} idle polls — stopping. BEST step {best['step']} F1={best['f1']:.4f} -> {keep_dir}/BEST.pt"); break
+                log(f"watch: {idle} idle polls - stopping. BEST_COMPOSITE step {best['composite']['step']} "
+                    f"score={best['composite']['score']:.4f} -> {keep_dir}/BEST_COMPOSITE.pt"); break
         time.sleep(a.poll)
 
 def task_slim(a):
@@ -526,6 +643,7 @@ def _record(task, a, res, headline):
     if getattr(a, "run", None) and getattr(a, "step", None) is not None:
         reg = load_json("dynamics_registry.json", {}); reg[_tag(a.ckpt)] = {"run": a.run, "step": int(a.step)}
         save_json("dynamics_registry.json", reg)
+        _write_tensorboard(task, a, res, headline)
     save_json(f"{task}_{_tag(a.ckpt)}.json", res)
 
 def main():
@@ -542,7 +660,7 @@ def main():
     wp = sub.add_parser("watkins"); add_ckpt(wp, run_step=True, bl=True); wp.add_argument("--limit", type=int, default=0, help="cap clips/split for a quick smoke run")
     fp = sub.add_parser("filter");  add_ckpt(fp, run_step=True, bl=True); fp.add_argument("--limit", type=int, default=0, help="cap clips/class for a quick smoke run")
     sp = sub.add_parser("shap");    add_ckpt(sp);                         sp.add_argument("--limit", type=int, default=0, help="cap clips/class for a quick smoke run")
-    kc = sub.add_parser("kclass"); add_ckpt(kc); kc.add_argument("--n-per-class", type=int, default=100)
+    kc = sub.add_parser("kclass"); add_ckpt(kc, run_step=True); kc.add_argument("--n-per-class", type=int, default=100)
     sl = sub.add_parser("slim"); sl.add_argument("ckpt"); sl.add_argument("--out", default=None, help="output path (default <ckpt>_slim.pt)")
     sub.add_parser("dynamics")
     wt = sub.add_parser("watch"); wt.add_argument("save_dir", help="live training checkpoint dir to watch")
@@ -550,9 +668,13 @@ def main():
     wt.add_argument("--poll", type=int, default=120, help="seconds between scans")
     wt.add_argument("--device", default=None, help="CUDA_VISIBLE_DEVICES for the validation subprocess (e.g. 0)")
     wt.add_argument("--preserve", default=None, help="dir to hard-link checkpoints into (default <save_dir>/validated)")
-    wt.add_argument("--keep-best", type=int, default=5, help="prune preserved/ to top-N by F1 + N most-recent (0=keep all)")
+    wt.add_argument("--keep-best", type=int, default=5, help="prune preserved/ to top-N by composite score + N most-recent (0=keep all)")
     wt.add_argument("--max-idle", type=int, default=0, help="stop after N idle polls with no new checkpoint (0=forever)")
     wt.add_argument("--limit", type=int, default=0, help="cap clips/split for faster (approximate) live validation")
+    wt.add_argument("--tensorboard-logdir", default=None, help="TensorBoard scalar root (default A2V_OUT/tensorboard)")
+    wt.add_argument("--weight-watkins", type=float, default=1.0, help="composite score weight for Watkins macro-F1")
+    wt.add_argument("--weight-kclass", type=float, default=1.0, help="composite score weight for Olga K-class macro-F1")
+    wt.add_argument("--weight-filter", type=float, default=1.0, help="composite score weight for signal/noise filter macro-F1")
     wt.add_argument("--no-baselines", dest="baselines", action="store_false"); wt.set_defaults(baselines=True)
     a = ap.parse_args()
     {"watkins": task_watkins, "filter": task_filter, "shap": task_shap, "kclass": task_kclass,
