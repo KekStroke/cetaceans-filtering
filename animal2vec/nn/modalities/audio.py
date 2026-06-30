@@ -49,6 +49,17 @@ class D2vAudioConfig(D2vModalityConfig):
     apply_window_to_root: bool = False
     sinc_norm: str = "instance"
     use_pswish: bool = False
+    use_frontend_glu_gate: bool = field(
+        default=False,
+        metadata={"help": "add a Conformer-conv-module-inspired GLU gate (pointwise -> GLU -> "
+                           "depthwise -> LayerNorm, residual, zero-init) once at the SincNet "
+                           "frontend's output, before masking/the transformer. Targets local "
+                           "noise-floor suppression. Default False = current behavior."},
+    )
+    frontend_glu_gate_kernel: int = field(
+        default=5,
+        metadata={"help": "depthwise conv kernel size for use_frontend_glu_gate"},
+    )
 
 
 class AudioEncoder(ModalitySpecificEncoder):
@@ -78,6 +89,8 @@ class AudioEncoder(ModalitySpecificEncoder):
             sample_rate=modality_cfg.sample_rate,
             sinc_norm=modality_cfg.sinc_norm,
             use_pswish=modality_cfg.use_pswish,
+            use_frontend_glu_gate=modality_cfg.use_frontend_glu_gate,
+            frontend_glu_gate_kernel=modality_cfg.frontend_glu_gate_kernel,
         )
 
         project_features = tnn.Sequential(

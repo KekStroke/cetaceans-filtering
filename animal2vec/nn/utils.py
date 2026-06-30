@@ -1071,7 +1071,9 @@ class ConvFeatureExtractionModel(tnn.Module):
             apply_window_to_root: bool = False,
             sample_rate=8000,
             sinc_norm="layer_norm",
-            use_pswish=False
+            use_pswish=False,
+            use_frontend_glu_gate=False,   # NEW: default False -> identical to current behavior
+            frontend_glu_gate_kernel=5,    # NEW: only consulted when use_frontend_glu_gate=True
     ):
         super().__init__()
         self.apply_window_to_root = apply_window_to_root
@@ -1179,6 +1181,13 @@ class ConvFeatureExtractionModel(tnn.Module):
             )
             in_d = dim
 
+        # Applied ONCE at the frontend's final output (pre-masking, pre-transformer), not
+        # per-conv-layer. `in_d` here is the last layer's output dim (conv_layers[-1][0]).
+        self.frontend_glu_gate = (
+            FrontendGLUGate(in_d, kernel_size=frontend_glu_gate_kernel)
+            if use_frontend_glu_gate else None
+        )
+
     def forward(self, x):
 
         # BxT -> BxCxT
@@ -1186,6 +1195,9 @@ class ConvFeatureExtractionModel(tnn.Module):
 
         for ii, conv in enumerate(self.conv_layers):
             x = conv(x)
+
+        if self.frontend_glu_gate is not None:
+            x = self.frontend_glu_gate(x)
 
         return x
 
@@ -1460,6 +1472,46 @@ class PSwish(tnn.Module):
     def reset_parameters(self):
         tnn.init.constant_(self.p_swish_alpha, val=2.)
         tnn.init.zeros_(self.p_swish_beta)
+
+
+class FrontendGLUGate(tnn.Module):
+    """
+    Conformer-conv-module-inspired LOCAL gate, applied ONCE at the SincNet frontend's output
+    (pre-masking, pre-transformer) rather than once per transformer layer: pointwise(2x) -> GLU
+    -> depthwise(k) -> LayerNorm, with a residual connection. The pointwise-in and depthwise
+    weights are zero-initialized so FrontendGLUGate(x) == x at step 0 of a fresh run (mirrors
+    PSwish's "start linear" init philosophy) -- enabling this flag does not perturb behavior
+    until the gate has something to learn.
+
+    Deliberately NOT inserted inside the transformer stack (cf. AltBlock) to avoid the
+    masked-convolution information-leakage problem (ConvMAE, arXiv:2205.03892): this operates
+    purely on the pre-masking feature sequence, the same safety property the existing
+    `positional_encoder` conv (nn/modalities/audio.py) already relies on.
+    """
+
+    def __init__(self, dim, kernel_size=5):
+        super(FrontendGLUGate, self).__init__()
+        self.pointwise_in = tnn.Conv1d(dim, 2 * dim, kernel_size=1)
+        self.depthwise = tnn.Conv1d(
+            dim, dim, kernel_size=kernel_size,
+            padding=kernel_size // 2, groups=dim, bias=False,
+        )
+        self.norm = Fp32LayerNorm(dim, elementwise_affine=True)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        tnn.init.zeros_(self.depthwise.weight)
+        tnn.init.zeros_(self.pointwise_in.weight)
+        if self.pointwise_in.bias is not None:
+            tnn.init.zeros_(self.pointwise_in.bias)
+
+    def forward(self, x):
+        # x: B x C x T (matches ConvFeatureExtractionModel's internal conv layout)
+        content, gate = self.pointwise_in(x).chunk(2, dim=1)
+        gated = content * torch.sigmoid(gate)
+        out = self.depthwise(gated)
+        out = self.norm(out.transpose(1, 2)).transpose(1, 2)
+        return x + out
 
 
 def chunks(lst, n):

@@ -82,6 +82,37 @@ class Data2VecMultiConfig(FairseqDataclass):
     mlp_ratio: float = 4
     layer_norm_first: bool = False
 
+    # --- opt-in architecture experiments (all default to exactly current behavior / are
+    # required to stay unset for resuming any existing checkpoint) ---
+    cosine_attention: bool = field(
+        default=False,
+        metadata={"help": "use cosine-similarity attention with a learned logit temperature "
+                           "(Swin V2-style QK-norm-like stabilizer) instead of dot-product "
+                           "attention. The implementation already existed in AltAttention but "
+                           "was never wired through this config. Default False = current "
+                           "behavior."},
+    )
+    attn_output_gate: Optional[str] = field(
+        default=None,
+        metadata={"help": "add a learned, input-dependent sigmoid gate on the attention output, "
+                           "applied after softmax(QK)V and before the output projection "
+                           "(Qwen3-Next / 'Gated Attention', arXiv:2505.06708). One of: None "
+                           "(default, no new parameters, exactly current behavior), 'headwise' "
+                           "(one gate scalar per head, negligible param cost), or 'elementwise' "
+                           "(one gate value per channel, ~dim^2 extra params/layer)."},
+    )
+    use_gated_mlp: bool = field(
+        default=False,
+        metadata={"help": "use a GLU-variant gated FFN (SwiGLU/GEGLU/ReGLU, Shazeer 2020) "
+                           "instead of the plain 2-layer Mlp, with a 2/3 hidden-dim rescale to "
+                           "keep parameter/FLOP count at parity. Default False = current "
+                           "behavior."},
+    )
+    gated_mlp_variant: str = field(
+        default="swiglu",
+        metadata={"help": "swiglu | geglu | reglu; only used when use_gated_mlp=True"},
+    )
+
     average_top_k_layers: int = field(
         default=16, metadata={"help": "how many layers to average"}
     )
@@ -239,6 +270,10 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
                 norm_layer=make_layer_norm,
                 layer_norm_first=cfg.layer_norm_first,
                 ffn_targets=not cfg.end_of_block_targets,
+                cosine_attention=cfg.cosine_attention,
+                attn_output_gate=cfg.attn_output_gate,
+                gated_mlp=cfg.use_gated_mlp,
+                gated_mlp_variant=cfg.gated_mlp_variant,
             )
 
         self.alibi_biases = {}
