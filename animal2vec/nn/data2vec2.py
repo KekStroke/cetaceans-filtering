@@ -82,6 +82,52 @@ class Data2VecMultiConfig(FairseqDataclass):
     mlp_ratio: float = 4
     layer_norm_first: bool = False
 
+    # --- opt-in architecture experiments (all default to exactly current behavior / are
+    # required to stay unset for resuming any existing checkpoint) ---
+    cosine_attention: bool = field(
+        default=False,
+        metadata={"help": "use cosine-similarity attention with a learned logit temperature "
+                           "(Swin V2-style QK-norm-like stabilizer) instead of dot-product "
+                           "attention. The implementation already existed in AltAttention but "
+                           "was never wired through this config. Default False = current "
+                           "behavior."},
+    )
+    attn_output_gate: Optional[str] = field(
+        default=None,
+        metadata={"help": "add a learned, input-dependent sigmoid gate on the attention output, "
+                           "applied after softmax(QK)V and before the output projection "
+                           "(Qwen3-Next / 'Gated Attention', arXiv:2505.06708). One of: None "
+                           "(default, no new parameters, exactly current behavior), 'headwise' "
+                           "(one gate scalar per head, negligible param cost), or 'elementwise' "
+                           "(one gate value per channel, ~dim^2 extra params/layer)."},
+    )
+    use_gated_mlp: bool = field(
+        default=False,
+        metadata={"help": "use a GLU-variant gated FFN (SwiGLU/GEGLU/ReGLU, Shazeer 2020) "
+                           "instead of the plain 2-layer Mlp, with a 2/3 hidden-dim rescale to "
+                           "keep parameter/FLOP count at parity. Default False = current "
+                           "behavior."},
+    )
+    gated_mlp_variant: str = field(
+        default="swiglu",
+        metadata={"help": "swiglu | geglu | reglu; only used when use_gated_mlp=True"},
+    )
+    use_rope: bool = field(
+        default=False,
+        metadata={"help": "apply RoPE (RoFormer, Su et al. 2021) to q/k inside attention, "
+                           "ADDITIVE to whatever ALiBi/conv-pos-embed is already configured "
+                           "(set model.modalities.audio.use_alibi_encoder=False separately for "
+                           "a RoPE-only setup). KNOWN LIMITATION: position index is arange(N) "
+                           "over the post-masking sequence, NOT thread through true pre-masking "
+                           "positions the way ALiBi is (see AltAttention.forward docstring) -- "
+                           "treat as an experimental, lower-confidence flag. Default False = "
+                           "current behavior."},
+    )
+    rope_base: float = field(
+        default=10000.0,
+        metadata={"help": "RoPE frequency base; only used when use_rope=True"},
+    )
+
     average_top_k_layers: int = field(
         default=16, metadata={"help": "how many layers to average"}
     )
@@ -239,6 +285,12 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
                 norm_layer=make_layer_norm,
                 layer_norm_first=cfg.layer_norm_first,
                 ffn_targets=not cfg.end_of_block_targets,
+                cosine_attention=cfg.cosine_attention,
+                attn_output_gate=cfg.attn_output_gate,
+                gated_mlp=cfg.use_gated_mlp,
+                gated_mlp_variant=cfg.gated_mlp_variant,
+                use_rope=cfg.use_rope,
+                rope_base=cfg.rope_base,
             )
 
         self.alibi_biases = {}

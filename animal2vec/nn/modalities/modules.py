@@ -7,6 +7,7 @@
 Train a new model on one or across multiple GPUs.
 """
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -269,6 +270,75 @@ class TransformerDecoder(nn.Module):
         return x
 
 
+class GatedMlp(nn.Module):
+    """GLU-variant gated FFN (Shazeer 2020, "GLU Variants Improve Transformer").
+    Drop-in alternative to timm's Mlp(in_features, hidden_features, act_layer, drop). To keep
+    parameter/FLOP count at parity with a plain 2-matrix Mlp built at the SAME nominal
+    hidden_features (= mlp_ratio * dim), this module applies the standard 2/3 rescale (3 weight
+    matrices vs 2) and rounds up to a multiple of 8, matching the convention used by e.g.
+    facebookresearch/dinov2's SwiGLUFFNFused.
+    """
+
+    def __init__(
+            self,
+            in_features,
+            hidden_features=None,
+            out_features=None,
+            drop=0.0,
+            variant="swiglu",  # one of {"swiglu", "geglu", "reglu"}
+            multiple_of=8,
+            bias=True,
+    ):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+
+        # parity rescale: a 3-matrix gated FFN at hidden' has params 3*dim*hidden'; a plain
+        # 2-matrix FFN at `hidden_features` has params 2*dim*hidden_features. Setting
+        # hidden' = (2/3)*hidden_features equalizes both, then round to a hardware-friendly
+        # multiple.
+        hidden_features = int(hidden_features * 2 / 3)
+        hidden_features = ((hidden_features + multiple_of - 1) // multiple_of) * multiple_of
+
+        act_fns = {"swiglu": nn.SiLU(), "geglu": nn.GELU(), "reglu": nn.ReLU()}
+        if variant not in act_fns:
+            raise ValueError(f"unknown gated_mlp_variant={variant!r}, expected one of {list(act_fns)}")
+        self.act = act_fns[variant]
+
+        # fused gate+value projection (one matmul instead of two)
+        self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        self.drop1 = nn.Dropout(drop)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+        self.drop2 = nn.Dropout(drop)
+
+    def forward(self, x):
+        x1, x2 = self.w12(x).chunk(2, dim=-1)
+        hidden = self.drop1(self.act(x1) * x2)
+        return self.drop2(self.w3(hidden))
+
+
+def _build_rope_cache(seq_len, head_dim, base, device, dtype):
+    """Standard RoPE (Su et al. 2021, RoFormer) sin/cos cache, computed fresh per forward call
+    (clip lengths vary; no cross-call caching to avoid device/seq-len bookkeeping complexity).
+    Returns cos, sin each of shape (seq_len, head_dim // 2)."""
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim))
+    t = torch.arange(seq_len, device=device, dtype=torch.float32)
+    freqs = torch.einsum("i,j->ij", t, inv_freq)  # (seq_len, head_dim // 2)
+    return freqs.cos().to(dtype), freqs.sin().to(dtype)
+
+
+def _apply_rope(x, cos, sin):
+    """x: (B, H, N, D). cos/sin: (N, D // 2). Rotates each adjacent (even, odd) pair of the head
+    dim by position-dependent angles; preserves the L2 norm of x, so this composes cleanly with
+    cosine_attention's F.normalize (rotate-then-normalize == normalize-then-rotate)."""
+    x1, x2 = x[..., 0::2], x[..., 1::2]
+    cos = cos[None, None, :, :].type_as(x)
+    sin = sin[None, None, :, :].type_as(x)
+    rx1 = x1 * cos - x2 * sin
+    rx2 = x1 * sin + x2 * cos
+    return torch.stack([rx1, rx2], dim=-1).flatten(-2)
+
+
 class AltBlock(nn.Module):
     def __init__(
             self,
@@ -287,6 +357,11 @@ class AltBlock(nn.Module):
             layer_norm_first=True,
             ffn_targets=False,
             cosine_attention=False,
+            attn_output_gate=None,  # NEW: None (default, no-op) | "headwise" | "elementwise"
+            gated_mlp=False,        # NEW: default False -> identical to current Mlp behavior
+            gated_mlp_variant="swiglu",  # NEW: only consulted when gated_mlp=True
+            use_rope=False,         # NEW: default False -> identical to current behavior
+            rope_base=10000.0,      # NEW: only consulted when use_rope=True
     ):
         super().__init__()
 
@@ -304,17 +379,28 @@ class AltBlock(nn.Module):
             attn_drop=attn_drop,
             proj_drop=drop,
             cosine_attention=cosine_attention,
+            attn_output_gate=attn_output_gate,
+            use_rope=use_rope,
+            rope_base=rope_base,
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(
-            in_features=dim,
-            hidden_features=mlp_hidden_dim,
-            act_layer=act_layer,
-            drop=mlp_drop,
-        )
+        if gated_mlp:
+            self.mlp = GatedMlp(
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                drop=mlp_drop,
+                variant=gated_mlp_variant,
+            )
+        else:
+            self.mlp = Mlp(
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                act_layer=act_layer,
+                drop=mlp_drop,
+            )
         self.post_mlp_dropout = nn.Dropout(post_mlp_drop, inplace=False)
 
     def forward(self, x, padding_mask=None, alibi_bias=None):
@@ -347,6 +433,9 @@ class AltAttention(nn.Module):
             attn_drop=0.0,
             proj_drop=0.0,
             cosine_attention=False,
+            attn_output_gate=None,  # NEW: None (default, no-op) | "headwise" | "elementwise"
+            use_rope=False,         # NEW: default False -> identical to current behavior
+            rope_base=10000.0,      # NEW: only consulted when use_rope=True
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -365,8 +454,46 @@ class AltAttention(nn.Module):
                 torch.log(10 * torch.ones((num_heads, 1, 1))), requires_grad=True
             )
 
+        # --- RoPE (RoFormer, Su et al. 2021) -------------------------------------------------
+        # Applied to q/k right after the qkv split, ADDITIVE to whatever ALiBi/conv-pos-embed is
+        # already configured at the modality level (set use_alibi_encoder=False separately for a
+        # RoPE-only setup). KNOWN LIMITATION: position index here is simply arange(N) over
+        # whatever sequence arrives at this forward call. Under masking with token removal, the
+        # codebase's existing ALiBi path (nn/modalities/base.py::masked_alibi) correctly preserves
+        # TRUE pre-masking distances via torch.gather on mask_info.ids_keep; this RoPE
+        # implementation does NOT thread true positions through masking the same way (that would
+        # require passing position ids through BlockEncoder/AltBlock.forward analogous to
+        # alibi_bias, a materially larger and riskier change) -- so under masking, RoPE here sees
+        # "compressed" positions (gaps from removed tokens collapsed), NOT the original spacing.
+        # This is a deliberate, documented scope tradeoff, not an oversight.
+        self.use_rope = use_rope
+        self.rope_base = rope_base
+        # ---------------------------------------------------------------------------------------
+
+        # --- attention-output gate (Qwen3-Next / "Gated Attention", arXiv:2505.06708) -------
+        # Sigmoid gate computed from the BLOCK INPUT (same x that feeds self.qkv), applied to
+        # the post-softmax attention output before self.proj. None (default) is a strict no-op:
+        # no new parameters, forward() reduces exactly to today's code path.
+        assert attn_output_gate in (None, "headwise", "elementwise"), attn_output_gate
+        self.attn_output_gate = attn_output_gate
+        self.head_dim = head_dim
+        if attn_output_gate == "headwise":
+            self.gate_proj = nn.Linear(dim, num_heads)
+        elif attn_output_gate == "elementwise":
+            self.gate_proj = nn.Linear(dim, dim)
+        else:
+            self.gate_proj = None
+        if self.gate_proj is not None:
+            # Highway/GRU-style init: start the gate near "pass-through" (sigmoid(2.0) ~= 0.88)
+            # so a freshly-started gated run begins close to the proven ungated function.
+            nn.init.zeros_(self.gate_proj.weight)
+            nn.init.constant_(self.gate_proj.bias, 2.0)
+        # ---------------------------------------------------------------------------------------
+
     def forward(self, x, padding_mask=None, alibi_bias=None):
         B, N, C = x.shape
+        gate_input = x  # block input, captured before `x` gets reassigned below
+
         qkv = (
             self.qkv(x)
             .reshape(B, N, 3, self.num_heads, C // self.num_heads)
@@ -380,11 +507,19 @@ class AltAttention(nn.Module):
 
         dtype = q.dtype
 
+        if self.use_rope:
+            cos, sin = _build_rope_cache(N, self.head_dim, self.rope_base, q.device, q.dtype)
+            q = _apply_rope(q, cos, sin)
+            k = _apply_rope(k, cos, sin)
+
         if self.cosine_attention:
             # cosine attention
             attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-2, -1)
+            # NOTE: `max` must be a plain float, not a CPU tensor (torch.tensor(1.0/0.01)) --
+            # this branch was never exercised before (cosine_attention was dead/unwired code),
+            # and a tensor `max` here raises a CPU/CUDA device-mismatch error in torch.clamp.
             logit_scale = torch.clamp(
-                self.logit_scale, max=torch.log(torch.tensor(1.0 / 0.01))
+                self.logit_scale, max=math.log(1.0 / 0.01)
             ).exp()
             attn = attn * logit_scale
         else:
@@ -405,6 +540,17 @@ class AltAttention(nn.Module):
         attn = self.attn_drop(attn)
         x = (attn @ v).transpose(1, 2)  #
         x = x.reshape(B, N, C)
+
+        if self.gate_proj is not None:
+            gate_score = self.gate_proj(gate_input)  # (B, N, H) for headwise, (B, N, C) for elementwise
+            if self.attn_output_gate == "headwise":
+                gate_score = (
+                    gate_score.unsqueeze(-1)
+                    .expand(B, N, self.num_heads, self.head_dim)
+                    .reshape(B, N, C)
+                )
+            x = x * torch.sigmoid(gate_score.type_as(x))
+
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -463,8 +609,9 @@ class EncDecAttention(nn.Module):
         if self.cosine_attention:
             # cosine attention
             attn = F.normalize(q, dim=-1) @ F.normalize(k, dim=-1).transpose(-2, -1)
+            # see AltAttention.forward for why `max` must be a plain float here
             logit_scale = torch.clamp(
-                self.logit_scale, max=torch.log(torch.tensor(1.0 / 0.01))
+                self.logit_scale, max=math.log(1.0 / 0.01)
             ).exp()
             attn = attn * logit_scale
         else:
