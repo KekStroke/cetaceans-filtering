@@ -1500,10 +1500,16 @@ class FrontendGLUGate(tnn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
+        # Zero-init ONLY the depthwise conv (the residual branch's output layer). With
+        # bias=False this makes `out` exactly 0 -> forward is an exact identity at init,
+        # regardless of pointwise_in. Crucially we must NOT also zero pointwise_in: doing so
+        # kills every gradient path (a zeroed depthwise blocks grad to pointwise_in, and a
+        # zeroed `gated` zeroes the depthwise weight's own grad), leaving the module
+        # permanently frozen at identity — it could never learn. Zeroing just the output
+        # layer is the standard "zero-init the residual branch" trick (ReZero/Fixup/LayerScale):
+        # identity at step 0, then the depthwise gets a nonzero grad immediately and
+        # pointwise_in wakes once depthwise is nonzero.
         tnn.init.zeros_(self.depthwise.weight)
-        tnn.init.zeros_(self.pointwise_in.weight)
-        if self.pointwise_in.bias is not None:
-            tnn.init.zeros_(self.pointwise_in.bias)
 
     def forward(self, x):
         # x: B x C x T (matches ConvFeatureExtractionModel's internal conv layout)
