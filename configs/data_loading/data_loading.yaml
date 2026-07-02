@@ -1,5 +1,5 @@
 # Download configuration
-raw_datasets_path: data
+raw_datasets_path: ${oc.env:DATA_LOADING_RAW_DATASETS_PATH,./data/raw_datasets}
 raw_segment_duration: 10 # -1 # sec
 raw_sample_rate: 8000
 raw_skip_below_sample_rate: true
@@ -13,6 +13,7 @@ sources:
     only_new_files: true
     delete_downloaded_after_processing: true
     max_files_per_deployment: 20
+    output_files_per_folder: 10000
     download_workers: 8
     random_seed: 42
     assume_sample_rate_hz: 48000
@@ -103,6 +104,8 @@ sources:
     output_dir_name: orcasound
     only_new_files: true
     max_files_per_source: null
+    downloaded_files_per_folder: 10000
+    output_files_per_folder: 10000
     download_workers: 8
     target_hours_total: null
     assume_minutes_per_file: 5.0
@@ -113,6 +116,7 @@ sources:
     delete_downloaded_after_processing: true
     delete_nonmatching_downloads: true
     selected_prefixes: null
+    prefix_subfolder_file_limits: null
     # Optional override for DEFAULT_SOURCES from download_orcasound.py:
     # sources:
     #   - bucket: acoustic-sandbox
@@ -121,6 +125,10 @@ sources:
     # selected_prefixes:
     #   - 2019-Orcasound-examples/
     #   - humpbacks/
+    # Optional cap for each immediate subfolder under a prefix:
+    # prefix_subfolder_file_limits:
+    #   - prefix: orcasounds/
+    #     max_files: 577014
     # Optional duration filtering by file length:
     # duration_min_minutes: 4.0
     # duration_max_minutes: 6.0
@@ -152,7 +160,7 @@ sources:
 
   # Used by utils/datasets_downloads/download_onc_hydrophones.py
   onc:
-    token: null # omit and use ONC_TOKEN
+    token: ${oc.env:ONC_TOKEN,}
     output_dir_name: onc
     tmp_dir_name: _tmp_onc
     split_by: auto # auto | location_code | device_code

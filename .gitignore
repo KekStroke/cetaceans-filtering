@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Local secrets and machine-specific paths
+.env
+
 data/watkins/
 data/sound-event-detection/
 data/noaa_onms/
