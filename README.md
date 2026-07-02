@@ -43,6 +43,30 @@ utils/
     |-- download_pacific_sound.py
     |-- download_voices_in_the_sea.py
     `-- download_onc_hydrophones.py
+
+animal2vec/
+|-- train.py                         # Torch 2 animal2vec pretraining entrypoint
+|-- configs/cetaceans/               # portable smoke and full pretraining configs
+|-- nn/                              # Fairseq task, model, criterion, trainer
+`-- scripts/                         # animal2vec manifest helpers
+```
+
+---
+
+## Scenario 7 - animal2vec pretraining
+
+The animal2vec training code is vendored as a normal package under
+`animal2vec/`. It can run from this repository without MLS or shared local
+paths. Full setup and launch docs:
+
+```text
+animal2vec/README.md
+```
+
+Default 16 kHz / 5 second pretraining recipe:
+
+```bash
+python -m animal2vec.train task.data=/path/to/manifest
 ```
 
 ---
