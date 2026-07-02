@@ -137,6 +137,24 @@ class Data2VecMultiConfig(FairseqDataclass):
                           "keeps its own norms. Requires torch>=2.4 for nn.RMSNorm."},
     )
 
+    # --- BEST-RQ objective (Chung et al. 2021 / USM) --------------------------------------------
+    # OPT-IN alternative SSL target. When True, the data2vec-2.0 latent-regression loss + EMA
+    # teacher are REPLACED by masked cross-entropy against a frozen random-projection quantizer of a
+    # fixed log-mel view of the input. No EMA teacher is built (simpler, less memory, no collapse).
+    # Default False = unchanged data2vec behavior. Cannot be combined with cls_loss/recon_loss.
+    use_bestrq: bool = field(
+        default=False,
+        metadata={"help": "use the BEST-RQ objective (frozen random-projection quantizer + masked "
+                          "cross-entropy) instead of the data2vec-2.0 latent regression + EMA "
+                          "teacher. Default False = current behavior."},
+    )
+    bestrq_codebook_size: int = field(default=8192, metadata={"help": "BEST-RQ codebook size (#classes)"})
+    bestrq_codebook_dim: int = field(default=16, metadata={"help": "BEST-RQ random-projection / codebook dim"})
+    bestrq_n_mels: int = field(default=80, metadata={"help": "#mel bins of the frozen log-mel quantizer input"})
+    bestrq_n_fft: int = field(default=512, metadata={"help": "n_fft for the BEST-RQ log-mel"})
+    bestrq_hop: int = field(default=160, metadata={"help": "hop for the BEST-RQ log-mel (pooled to the encoder frame rate)"})
+    bestrq_seed: int = field(default=42, metadata={"help": "seed for the frozen quantizer (saved as buffers)"})
+
     average_top_k_layers: int = field(
         default=16, metadata={"help": "how many layers to average"}
     )
@@ -345,6 +363,7 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
             # logger.info(self.modality_encoders[mod.name])
 
         self.ema = None
+        self.bestrq = None
 
         self.average_top_k_layers = cfg.average_top_k_layers
         self.loss_beta = cfg.loss_beta
@@ -371,7 +390,17 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
             mod_enc.reset_parameters()
 
         if not skip_ema:
-            self.ema = self.make_ema_teacher(cfg.ema_decay)
+            if cfg.use_bestrq:
+                # BEST-RQ replaces the EMA teacher: frozen quantizer + trainable prediction head.
+                from animal2vec.nn.bestrq import BestRQModule
+                self.bestrq = BestRQModule(
+                    encoder_dim=cfg.embed_dim, sample_rate=cfg.sample_rate,
+                    codebook_size=cfg.bestrq_codebook_size, codebook_dim=cfg.bestrq_codebook_dim,
+                    n_mels=cfg.bestrq_n_mels, n_fft=cfg.bestrq_n_fft, hop=cfg.bestrq_hop,
+                    seed=cfg.bestrq_seed,
+                )
+            else:
+                self.ema = self.make_ema_teacher(cfg.ema_decay)
             self.shared_decoder = (
                 Decoder1d(cfg.shared_decoder, cfg.embed_dim)
                 if self.cfg.shared_decoder is not None
@@ -856,6 +885,10 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
         # print("\n len(xs) post decoding", len(xs))
         # print("\n xs[0].size post decoding", xs[0].size())
 
+        if self.cfg.use_bestrq:
+            # BEST-RQ: predict frozen-quantizer codebook labels at masked positions (no EMA teacher).
+            return self._bestrq_result(source, xs, extractor_out, encoder_mask, mode)
+
         p = next(self.ema.model.parameters())
         device = x.device
         dtype = x.dtype
@@ -1092,6 +1125,36 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
                         )
 
             result["ema_decay"] = self.ema.get_decay() * 1000
+        return result
+
+    def _bestrq_result(self, source, xs, extractor_out, encoder_mask, mode):
+        """BEST-RQ loss: masked cross-entropy between the decoder output and the frozen
+        random-projection-quantizer labels of a fixed log-mel view of the input. Mirrors the
+        data2vec loss path's masked-position selection and result dict, so the criterion and the
+        sample_size normalization are identical -- only the target/loss differ."""
+        T = extractor_out["local_features"].size(1)              # encoder frame count (pre extra tokens)
+        with torch.no_grad():
+            targets = self.bestrq.targets(source, T)             # (B, T) codebook indices
+            if self.cfg.clone_batch > 1:
+                targets = targets.repeat_interleave(self.cfg.clone_batch, 0)
+        masked_b = encoder_mask.mask.bool()                      # (B*clone_batch, T)
+        targets_m = targets[masked_b]                            # (N,)
+        sample_size = masked_b.sum().long()
+        result = {"losses": {}, "sample_size": sample_size}
+        for i, x in enumerate(xs):
+            xm = x[masked_b] if x.size(1) == masked_b.size(1) else x.reshape(-1, x.size(-1))
+            logits = self.bestrq.logits(xm)                      # (N, codebook_size), model dtype
+            loss = F.cross_entropy(logits.float(), targets_m, reduction="sum")  # softmax in fp32
+            n = f"{mode}_bestrq_{i}" if len(xs) > 1 else f"{mode}_bestrq"
+            result["losses"][n] = loss * self.cfg.d2v_loss
+            if i == 0:
+                with torch.no_grad():
+                    result["bestrq_acc"] = (logits.argmax(-1) == targets_m).float().mean() * sample_size
+                    result["bestrq_codes"] = float(targets_m.unique().numel())
+        if encoder_mask is not None:
+            result["masked_pct"] = 1 - (
+                encoder_mask.ids_keep.size(1) / encoder_mask.ids_restore.size(1)
+            )
         return result
 
     def forward_decoder(
