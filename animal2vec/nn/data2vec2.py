@@ -127,6 +127,15 @@ class Data2VecMultiConfig(FairseqDataclass):
         default=10000.0,
         metadata={"help": "RoPE frequency base; only used when use_rope=True"},
     )
+    norm_type: str = field(
+        default="layernorm",
+        metadata={"help": "transformer-block normalization: 'layernorm' (default, current "
+                          "behavior) or 'rmsnorm' (RMSNorm, Zhang & Sennrich 2019 — the modern "
+                          "default in Llama/most 2024-26 LLMs; drops the mean-centering and bias, "
+                          "slightly cheaper and empirically as good/better). Applies to the "
+                          "transformer blocks + prenet + final encoder norm; the SincNet frontend "
+                          "keeps its own norms. Requires torch>=2.4 for nn.RMSNorm."},
+    )
 
     average_top_k_layers: int = field(
         default=16, metadata={"help": "how many layers to average"}
@@ -267,9 +276,19 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
         self.modalities = modalities
         self.task = task
 
-        make_layer_norm = partial(
-            nn.LayerNorm, eps=cfg.norm_eps, elementwise_affine=cfg.norm_affine
-        )
+        norm_type = getattr(cfg, "norm_type", "layernorm")
+        if norm_type == "rmsnorm":
+            # RMSNorm (Zhang & Sennrich 2019): no mean-centering, no bias — the modern default.
+            # torch>=2.4 ships nn.RMSNorm; _init_weights leaves it at its correct default (weight=1).
+            make_layer_norm = partial(
+                nn.RMSNorm, eps=cfg.norm_eps, elementwise_affine=cfg.norm_affine
+            )
+        elif norm_type == "layernorm":
+            make_layer_norm = partial(
+                nn.LayerNorm, eps=cfg.norm_eps, elementwise_affine=cfg.norm_affine
+            )
+        else:
+            raise ValueError(f"unknown norm_type={norm_type!r}, expected 'layernorm' or 'rmsnorm'")
 
         def make_block(drop_path, dim=None, heads=None):
             return AltBlock(

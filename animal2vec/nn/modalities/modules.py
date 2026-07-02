@@ -81,7 +81,7 @@ class BlockEncoder(nn.Module):
         self.layerdrop = layerdrop
         self.dropout = nn.Dropout(dropout, inplace=True)
 
-    def forward(self, x, padding_mask, alibi_bias, alibi_scale):
+    def forward(self, x, padding_mask, alibi_bias, alibi_scale, position_ids=None):
         if self.norm is not None and not self.layer_norm_first:
             x = self.norm(x)
 
@@ -101,7 +101,7 @@ class BlockEncoder(nn.Module):
                         else alibi_scale.squeeze(0)
                     )
                     ab = ab * scale.type_as(ab)
-                x, _ = blk(x, padding_mask, ab)
+                x, _ = blk(x, padding_mask, ab, position_ids)
 
         if self.norm is not None and self.layer_norm_first:
             x = self.norm(x)
@@ -317,23 +317,28 @@ class GatedMlp(nn.Module):
         return self.drop2(self.w3(hidden))
 
 
-def _build_rope_cache(seq_len, head_dim, base, device, dtype):
-    """Standard RoPE (Su et al. 2021, RoFormer) sin/cos cache, computed fresh per forward call
-    (clip lengths vary; no cross-call caching to avoid device/seq-len bookkeeping complexity).
-    Returns cos, sin each of shape (seq_len, head_dim // 2)."""
-    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim))
-    t = torch.arange(seq_len, device=device, dtype=torch.float32)
-    freqs = torch.einsum("i,j->ij", t, inv_freq)  # (seq_len, head_dim // 2)
+def _rope_cos_sin(position_ids, head_dim, base, dtype):
+    """Standard RoPE (Su et al. 2021, RoFormer) sin/cos for arbitrary INTEGER positions, computed
+    fresh per forward call. `position_ids` is either (N,) — positions shared across the batch — or
+    (B, N) — per-sample positions (used to feed the TRUE pre-masking positions of the kept tokens
+    through masking, so a token at original index p is rotated by p regardless of which tokens the
+    random mask dropped). Returns cos, sin of shape (*position_ids.shape, head_dim // 2)."""
+    inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, device=position_ids.device, dtype=torch.float32) / head_dim))
+    freqs = position_ids.to(torch.float32).unsqueeze(-1) * inv_freq  # (..., N, head_dim // 2)
     return freqs.cos().to(dtype), freqs.sin().to(dtype)
 
 
 def _apply_rope(x, cos, sin):
-    """x: (B, H, N, D). cos/sin: (N, D // 2). Rotates each adjacent (even, odd) pair of the head
-    dim by position-dependent angles; preserves the L2 norm of x, so this composes cleanly with
-    cosine_attention's F.normalize (rotate-then-normalize == normalize-then-rotate)."""
+    """x: (B, H, N, D). cos/sin: (N, D // 2) [shared] or (B, N, D // 2) [per-sample]. Rotates each
+    adjacent (even, odd) pair of the head dim by position-dependent angles; preserves the L2 norm
+    of x, so this composes cleanly with cosine_attention's F.normalize (rotate-then-normalize ==
+    normalize-then-rotate)."""
+    if cos.dim() == 2:                       # (N, D/2) -> broadcast over batch & heads
+        cos = cos[None, None]; sin = sin[None, None]
+    else:                                    # (B, N, D/2) -> broadcast over heads only
+        cos = cos[:, None]; sin = sin[:, None]
+    cos = cos.type_as(x); sin = sin.type_as(x)
     x1, x2 = x[..., 0::2], x[..., 1::2]
-    cos = cos[None, None, :, :].type_as(x)
-    sin = sin[None, None, :, :].type_as(x)
     rx1 = x1 * cos - x2 * sin
     rx2 = x1 * sin + x2 * cos
     return torch.stack([rx1, rx2], dim=-1).flatten(-2)
@@ -403,16 +408,16 @@ class AltBlock(nn.Module):
             )
         self.post_mlp_dropout = nn.Dropout(post_mlp_drop, inplace=False)
 
-    def forward(self, x, padding_mask=None, alibi_bias=None):
+    def forward(self, x, padding_mask=None, alibi_bias=None, position_ids=None):
         if self.layer_norm_first:
-            x = x + self.drop_path(self.attn(self.norm1(x), padding_mask, alibi_bias))
+            x = x + self.drop_path(self.attn(self.norm1(x), padding_mask, alibi_bias, position_ids))
             r = x = self.mlp(self.norm2(x))
             t = x
             x = r + self.drop_path(self.post_mlp_dropout(x))
             if not self.ffn_targets:
                 t = x
         else:
-            x = x + self.drop_path(self.attn(x, padding_mask, alibi_bias))
+            x = x + self.drop_path(self.attn(x, padding_mask, alibi_bias, position_ids))
             r = x = self.norm1(x)
             x = self.mlp(x)
             t = x
@@ -457,15 +462,13 @@ class AltAttention(nn.Module):
         # --- RoPE (RoFormer, Su et al. 2021) -------------------------------------------------
         # Applied to q/k right after the qkv split, ADDITIVE to whatever ALiBi/conv-pos-embed is
         # already configured at the modality level (set use_alibi_encoder=False separately for a
-        # RoPE-only setup). KNOWN LIMITATION: position index here is simply arange(N) over
-        # whatever sequence arrives at this forward call. Under masking with token removal, the
-        # codebase's existing ALiBi path (nn/modalities/base.py::masked_alibi) correctly preserves
-        # TRUE pre-masking distances via torch.gather on mask_info.ids_keep; this RoPE
-        # implementation does NOT thread true positions through masking the same way (that would
-        # require passing position ids through BlockEncoder/AltBlock.forward analogous to
-        # alibi_bias, a materially larger and riskier change) -- so under masking, RoPE here sees
-        # "compressed" positions (gaps from removed tokens collapsed), NOT the original spacing.
-        # This is a deliberate, documented scope tradeoff, not an oversight.
+        # RoPE-only setup). The TRUE pre-masking positions are threaded in via `position_ids`
+        # (nn/modalities/base.py::contextualized_features derives them from mask_info.ids_keep,
+        # exactly as the ALiBi path does via masked_alibi, and passes them through
+        # BlockEncoder/AltBlock.forward) -- so a token at original index p is rotated by p even
+        # after the random mask drops its neighbours. When position_ids is None (no masking:
+        # inference / the EMA-teacher full-sequence pass) it falls back to arange(N), which is
+        # already the true positions of a contiguous sequence.
         self.use_rope = use_rope
         self.rope_base = rope_base
         # ---------------------------------------------------------------------------------------
@@ -490,7 +493,7 @@ class AltAttention(nn.Module):
             nn.init.constant_(self.gate_proj.bias, 2.0)
         # ---------------------------------------------------------------------------------------
 
-    def forward(self, x, padding_mask=None, alibi_bias=None):
+    def forward(self, x, padding_mask=None, alibi_bias=None, position_ids=None):
         B, N, C = x.shape
         gate_input = x  # block input, captured before `x` gets reassigned below
 
@@ -508,7 +511,9 @@ class AltAttention(nn.Module):
         dtype = q.dtype
 
         if self.use_rope:
-            cos, sin = _build_rope_cache(N, self.head_dim, self.rope_base, q.device, q.dtype)
+            if position_ids is None:                       # no masking (inference / EMA teacher)
+                position_ids = torch.arange(N, device=q.device)
+            cos, sin = _rope_cos_sin(position_ids, self.head_dim, self.rope_base, q.dtype)
             q = _apply_rope(q, cos, sin)
             k = _apply_rope(k, cos, sin)
 

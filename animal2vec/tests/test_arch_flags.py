@@ -66,7 +66,7 @@ def test_gated_mlp_variants_and_parity():
 
 def test_rope_properties():
     hd = DIM // HEADS
-    cos, sin = M._build_rope_cache(N, hd, 10000.0, torch.device(DEV), torch.float32)
+    cos, sin = M._rope_cos_sin(torch.arange(N, device=DEV), hd, 10000.0, torch.float32)
     x = torch.randn(B, HEADS, N, hd, device=DEV)
     rx = M._apply_rope(x, cos, sin)
     assert torch.allclose(x.norm(dim=-1), rx.norm(dim=-1), atol=1e-5)      # norm preserving
@@ -78,6 +78,37 @@ def test_rope_properties():
     for off in range(-4, 5):                                              # relative-position only
         vals = [dots[m, m - off].item() for m in range(N) if 0 <= m - off < N]
         assert max(vals) - min(vals) < 1e-3
+
+
+def test_rope_mask_invariance():
+    """The masking fix: a kept token must rotate by its TRUE original index, not its compressed
+    post-mask slot. So cos/sin for a gathered subsequence equals cos/sin of the full sequence
+    indexed at those positions, and per-sample (B,N) positions apply correctly through _apply_rope."""
+    hd = DIM // HEADS
+    full = torch.arange(16, device=DEV)
+    kept = torch.tensor([0, 3, 7, 9, 15], device=DEV)            # positions surviving a random mask
+    cf, sf = M._rope_cos_sin(full, hd, 10000.0, torch.float32)
+    ck, sk = M._rope_cos_sin(kept, hd, 10000.0, torch.float32)
+    assert torch.allclose(ck, cf[kept], atol=1e-6) and torch.allclose(sk, sf[kept], atol=1e-6)
+    x = torch.randn(2, HEADS, kept.numel(), hd, device=DEV)
+    pos_b = kept.unsqueeze(0).expand(2, -1)                      # (B, N) per-sample positions
+    cb, sb = M._rope_cos_sin(pos_b, hd, 10000.0, torch.float32)
+    rx = M._apply_rope(x, cb, sb)
+    assert rx.shape == x.shape and torch.allclose(x.norm(dim=-1), rx.norm(dim=-1), atol=1e-5)
+
+
+def test_altattention_position_ids_wiring():
+    torch.manual_seed(0)
+    x = torch.randn(B, N, DIM, device=DEV)
+    # rope on: explicit contiguous positions == None (both are the true positions of a full seq)
+    a = M.AltAttention(DIM, num_heads=HEADS, qkv_bias=True, use_rope=True).to(DEV).eval()
+    with torch.no_grad():
+        assert torch.allclose(a(x, position_ids=None),
+                              a(x, position_ids=torch.arange(N, device=DEV)), atol=1e-6)
+    # default-off: position_ids must be completely ignored (bit-identical)
+    b = M.AltAttention(DIM, num_heads=HEADS, qkv_bias=True).to(DEV).eval()
+    with torch.no_grad():
+        assert torch.allclose(b(x), b(x, position_ids=torch.arange(N, device=DEV)), atol=0)
 
 
 def test_attn_output_gate_forward_and_init():
