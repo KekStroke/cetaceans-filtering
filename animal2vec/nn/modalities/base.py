@@ -313,6 +313,15 @@ class ModalitySpecificEncoder(nn.Module):
             if mask_info is not None and remove_masked:
                 alibi_bias = masked_alibi(alibi_bias, mask_info)
 
+        # TRUE pre-masking positions for RoPE (mirrors masked_alibi): each kept token carries its
+        # original index so its RoPE rotation is invariant to which neighbours the random mask
+        # dropped. None when no tokens were removed (contiguous sequence: inference / EMA teacher)
+        # -> attention falls back to arange(N). Cheap and unused unless a block has use_rope=True,
+        # so this stays a no-op for the default architecture.
+        position_ids = None
+        if mask_info is not None and remove_masked:
+            position_ids = mask_info.ids_keep[..., 0]
+
         if self.extra_tokens is not None:
             num = self.extra_tokens.size(1)
             x = torch.cat([self.extra_tokens.expand(x.size(0), -1, -1), x], dim=1)
@@ -322,6 +331,9 @@ class ModalitySpecificEncoder(nn.Module):
             if alibi_bias is not None:
                 # B x H x T x T
                 alibi_bias = F.pad(alibi_bias, (num, 0, num, 0))
+            if position_ids is not None:
+                # extra (e.g. CLS) tokens get position 0
+                position_ids = F.pad(position_ids, (num, 0))
 
         x = self.context_encoder(
             x,
@@ -330,6 +342,7 @@ class ModalitySpecificEncoder(nn.Module):
             alibi_scale[: self.modality_cfg.prenet_depth]
             if alibi_scale is not None
             else None,
+            position_ids,
         )
 
         return {
