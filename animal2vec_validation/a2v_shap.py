@@ -20,7 +20,8 @@ import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 HERE = os.path.dirname(os.path.abspath(__file__))
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
 SR = 8000; NB = 8; BANDS = [(i * 500, (i + 1) * 500) for i in range(NB)]   # 8kHz default; re-derived post-load
-ckpt = sys.argv[1] if len(sys.argv) > 1 else "/home/yarix/a2v_ckpts/ckpt25k_slim.pt"
+if len(sys.argv) < 2: sys.exit("usage: a2v_shap.py <checkpoint.pt>  (set A2V_LAB_DIR to the K-class clip dir)")
+ckpt = sys.argv[1]
 
 model = E.load_model(ckpt)   # runs _detect_set_sr(): E.SR now reflects the checkpoint's true rate
 # Re-derive the band grid from the detected rate so 16kHz checkpoints get 0..8kHz (16 bands), not a

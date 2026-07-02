@@ -14,7 +14,8 @@ from sklearn.metrics import f1_score
 HERE = os.path.dirname(os.path.abspath(__file__))
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
 
-ckpt = sys.argv[1] if len(sys.argv) > 1 else "/tmp/ckpt/checkpoint_2_25000.pt"
+if len(sys.argv) < 2: sys.exit("usage: a2v_layer_sweep.py <checkpoint.pt> [n_per_class]  (set A2V_LAB_DIR)")
+ckpt = sys.argv[1]
 npc = int(sys.argv[2]) if len(sys.argv) > 2 else 100
 model = E.load_model(ckpt)
 items = E.gather_kclass(os.environ.get("A2V_LAB_DIR", "/mnt/c/Users/Iaroslav/CETACEANS/new_training_data"), npc)

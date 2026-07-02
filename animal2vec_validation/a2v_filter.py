@@ -16,7 +16,8 @@ from sklearn.metrics import f1_score, balanced_accuracy_score, roc_auc_score
 HERE = os.path.dirname(os.path.abspath(__file__))
 t0 = time.time(); log = lambda m: print(f"[{time.time()-t0:6.1f}s] {m}", flush=True)
 DATA = os.environ.get("A2V_LAB_DIR", "/mnt/c/Users/Iaroslav/CETACEANS/new_training_data")
-ckpt = sys.argv[1] if len(sys.argv) > 1 else "/home/yarix/a2v_ckpts/ckpt25k_slim.pt"
+if len(sys.argv) < 2: sys.exit("usage: a2v_filter.py <checkpoint.pt>  (set A2V_LAB_DIR to the K-class clip dir)")
+ckpt = sys.argv[1]
 tag = ckpt.split("/")[-1].replace("_slim.pt", "").replace(".pt", "")
 N_PER = 500   # ~500 signal + ~500 noise, balanced
 
