@@ -1,4 +1,5 @@
 import random
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import ceil
 from pathlib import Path
@@ -41,6 +42,7 @@ DEFAULT_SOURCES: List[Source] = [
 ]
 
 AUDIO_EXTENSIONS = {".wav", ".flac", ".aif", ".aiff", ".mp3"}
+CHUNK_SUFFIX_RE = re.compile(r"_[0-9]{5}$")
 
 
 def _normalize_prefix(prefix: str) -> str:
@@ -81,8 +83,12 @@ def _processed_audio_outputs(processed_dir: Path, stem: str) -> List[Path]:
     return sorted(set(outputs))
 
 
-def _processed_audio_exists(processed_dir: Path, stem: str) -> bool:
-    return bool(_processed_audio_outputs(processed_dir, stem))
+def _processed_stem_index(processed_dir: Path) -> set[str]:
+    stems: set[str] = set()
+    for audio_path in processed_dir.rglob("*.wav"):
+        stem = CHUNK_SUFFIX_RE.sub("", audio_path.stem)
+        stems.add(stem)
+    return stems
 
 
 def _list_s3_audio_objects(s3, bucket: str, prefix: str) -> List[AudioObject]:
@@ -143,6 +149,77 @@ def _pick_objects(
     return chosen[:max_files]
 
 
+def _optional_positive_int(value: object, field_name: str) -> Optional[int]:
+    if value is None or str(value).strip().lower() in {"none", "null", ""}:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive integer or null")
+    return parsed
+
+
+def _prefix_subfolder_file_limits(orcasound_cfg: Dict[str, object]) -> Dict[str, int]:
+    limits_cfg = orcasound_cfg.get("prefix_subfolder_file_limits")
+    if not limits_cfg:
+        return {}
+
+    limits: Dict[str, int] = {}
+    for item in limits_cfg:
+        if not (isinstance(item, dict) or hasattr(item, "get")):
+            continue
+        prefix = _normalize_prefix(str(item.get("prefix", "")))
+        max_files = _optional_positive_int(
+            item.get("max_files"),
+            "data_loading.sources.orcasound.prefix_subfolder_file_limits[].max_files",
+        )
+        if prefix and max_files is not None:
+            limits[prefix] = max_files
+    return limits
+
+
+def _subfolder_after_prefix(key: str, prefix: str) -> str:
+    suffix = key[len(prefix) :] if key.startswith(prefix) else key
+    first_part = suffix.split("/", 1)[0].strip()
+    return first_part or "__root__"
+
+
+def _pick_objects_per_subfolder(
+    objects: Sequence[AudioObject],
+    prefix: str,
+    max_files_per_subfolder: Optional[int],
+    rng: random.Random,
+) -> List[AudioObject]:
+    if max_files_per_subfolder is None:
+        return list(objects)
+
+    grouped: Dict[str, List[AudioObject]] = {}
+    for key, size in objects:
+        grouped.setdefault(_subfolder_after_prefix(key, prefix), []).append((key, size))
+
+    selected: List[AudioObject] = []
+    for subfolder in sorted(grouped):
+        selected.extend(
+            _pick_objects(
+                objects=grouped[subfolder],
+                max_files=max_files_per_subfolder,
+                rng=rng,
+            )
+        )
+    return selected
+
+
+def _shard_dir(root: Path, index: int, files_per_folder: Optional[int]) -> Path:
+    if files_per_folder is None:
+        return root
+    return root / f"shard_{index // files_per_folder:06d}"
+
+
+def _estimated_output_files(file_duration: Optional[float], chunk_sec: float) -> int:
+    if file_duration is None or chunk_sec == -1:
+        return 1
+    return max(1, ceil(file_duration / chunk_sec))
+
+
 def _probe_duration_seconds(path: Path) -> Optional[float]:
     try:
         info = sf.info(str(path))
@@ -177,15 +254,19 @@ def main(config: DictConfig):
         orcasound_cfg.get("delete_downloaded_after_processing", False)
     )
     delete_nonmatching = bool(orcasound_cfg.get("delete_nonmatching_downloads", True))
-    max_files_cfg = orcasound_cfg.get("max_files_per_source")
-    if max_files_cfg is None or str(max_files_cfg).strip().lower() in {
-        "none",
-        "null",
-        "",
-    }:
-        max_files_per_source: Optional[int] = None
-    else:
-        max_files_per_source = int(max_files_cfg)
+    max_files_per_source = _optional_positive_int(
+        orcasound_cfg.get("max_files_per_source"),
+        "data_loading.sources.orcasound.max_files_per_source",
+    )
+    downloaded_files_per_folder = _optional_positive_int(
+        orcasound_cfg.get("downloaded_files_per_folder"),
+        "data_loading.sources.orcasound.downloaded_files_per_folder",
+    )
+    output_files_per_folder = _optional_positive_int(
+        orcasound_cfg.get("output_files_per_folder"),
+        "data_loading.sources.orcasound.output_files_per_folder",
+    )
+    per_prefix_subfolder_limits = _prefix_subfolder_file_limits(orcasound_cfg)
     target_hours_cfg = orcasound_cfg.get("target_hours_total")
     if target_hours_cfg is None or str(target_hours_cfg).strip().lower() in {
         "none",
@@ -264,6 +345,25 @@ def main(config: DictConfig):
         f"Global files cap: "
         f"{max_total_files if max_total_files is not None else 'unlimited'}"
     )
+    print(
+        "Per-prefix subfolder caps: "
+        + (
+            ", ".join(
+                f"{prefix}/*={limit}"
+                for prefix, limit in per_prefix_subfolder_limits.items()
+            )
+            if per_prefix_subfolder_limits
+            else "disabled"
+        )
+    )
+    print(
+        f"Download folder shard size: "
+        f"{downloaded_files_per_folder if downloaded_files_per_folder is not None else 'disabled'}"
+    )
+    print(
+        f"Output audio folder shard size: "
+        f"{output_files_per_folder if output_files_per_folder is not None else 'disabled'}"
+    )
     print(f"Download workers: {download_workers}")
     print(f"Delete downloads after processing: {delete_downloaded}")
     print(f"Delete non-matching downloads: {delete_nonmatching}")
@@ -312,11 +412,11 @@ def main(config: DictConfig):
             continue
 
         if only_new_files:
+            processed_stems = _processed_stem_index(source_audio_dir)
             pending: List[AudioObject] = []
             for key, size in objects:
                 stem = _object_stem(bucket=bucket, key=key)
-                already_processed = _processed_audio_exists(source_audio_dir, stem)
-                if already_processed:
+                if stem in processed_stems:
                     continue
                 pending.append((key, size))
             objects = pending
@@ -352,14 +452,23 @@ def main(config: DictConfig):
             selection_cap = max(selection_cap * 8, selection_cap)
 
         rng = random.Random(seed + source_idx)
-        selected = _pick_objects(objects=objects, max_files=selection_cap, rng=rng)
+        selected = _pick_objects_per_subfolder(
+            objects=objects,
+            prefix=prefix,
+            max_files_per_subfolder=per_prefix_subfolder_limits.get(prefix),
+            rng=rng,
+        )
+        selected = _pick_objects(objects=selected, max_files=selection_cap, rng=rng)
         print(f"Selected files: {len(selected)}")
 
         download_results: Dict[int, tuple[bool, Path, bool, int, str]] = {}
 
         def download_item(file_idx: int, key: str, size: int):
             src_name = Path(key).name
-            local_src = source_download_dir / Path(key)
+            local_src = (
+                _shard_dir(source_download_dir, file_idx, downloaded_files_per_folder)
+                / Path(key)
+            )
             local_src.parent.mkdir(parents=True, exist_ok=True)
             if not local_src.exists() or local_src.stat().st_size != size:
                 try:
@@ -407,6 +516,7 @@ def main(config: DictConfig):
 
         stop_all_sources = False
         accepted_source_files = 0
+        output_file_count = sum(1 for _ in source_audio_dir.rglob("*.wav"))
         for file_idx, (key, size) in enumerate(selected):
             if max_total_files is not None and processed_files >= max_total_files:
                 print("Reached global file cap. Stopping.")
@@ -490,11 +600,35 @@ def main(config: DictConfig):
                     continue
 
             stem = _object_stem(bucket=bucket, key=key)
+            output_file_estimate = _estimated_output_files(
+                file_duration=file_duration,
+                chunk_sec=chunk_sec,
+            )
+            output_dir = _shard_dir(
+                source_audio_dir,
+                output_file_count,
+                output_files_per_folder,
+            )
+            if (
+                output_files_per_folder is not None
+                and output_file_count % output_files_per_folder
+                and output_file_count % output_files_per_folder + output_file_estimate
+                > output_files_per_folder
+            ):
+                output_file_count += (
+                    output_files_per_folder
+                    - (output_file_count % output_files_per_folder)
+                )
+                output_dir = _shard_dir(
+                    source_audio_dir,
+                    output_file_count,
+                    output_files_per_folder,
+                )
             try:
                 before_seconds = total_seconds[0]
                 process_large_audio(
                     src_path=local_src,
-                    out_dir=source_audio_dir,
+                    out_dir=output_dir,
                     stem_base=stem,
                     total_seconds_ref=total_seconds,
                     sr_target=sr_target,
@@ -503,6 +637,7 @@ def main(config: DictConfig):
                 )
                 processed_files += 1
                 accepted_source_files += 1
+                output_file_count += len(_processed_audio_outputs(output_dir, stem))
             except Exception as exc:
                 print(f"Error processing '{src_name}': {exc}")
                 continue

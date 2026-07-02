@@ -39,6 +39,7 @@ Example (in configs/data_loading/data_loading.yaml, under the nested ``sources``
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, MutableMapping, Optional
@@ -170,6 +171,8 @@ def main(cfg: DictConfig) -> None:
     delete_source_after = bool(onc_cfg.get("delete_downloaded_after", True))
     progress_every = int(onc_cfg.get("progress_every", 50))
     download_workers = max(1, int(onc_cfg.get("download_workers", 1)))
+    max_retries = max(1, int(onc_cfg.get("max_retries", 1)))
+    retry_sleep_seconds = max(0.0, float(onc_cfg.get("retry_sleep_seconds", 5.0)))
 
     sr_target = dl["raw_sample_rate"]
     chunk_sec = float(dl["raw_segment_duration"])
@@ -193,6 +196,7 @@ def main(cfg: DictConfig) -> None:
     total_seconds: List[float] = [0.0]
     processed = 0
     print(f"Download workers: {download_workers}")
+    print(f"Retries per file: {max_retries}")
 
     for target in targets:
         t_plain = _to_plain(target)
@@ -243,40 +247,60 @@ def main(cfg: DictConfig) -> None:
 
         def download_and_process(fname: str):
             local_path: Optional[Path] = None
-            try:
-                worker_onc = ONC(token, outPath=str(tmp_dir))
-                worker_onc.downloadArchivefile(fname, overwrite=False)
-                local_path = tmp_dir / fname
-                if not local_path.exists():
-                    hits = list(tmp_dir.rglob(Path(fname).name))
-                    if hits:
-                        local_path = hits[0]
-                if local_path is None or not local_path.exists():
-                    raise FileNotFoundError(f"downloaded file not found: {fname}")
+            stem_base = f"onc_{sanitize_stem(Path(fname).stem)}"
+            if _processed_audio_outputs(audio_dir, stem_base):
+                return True, fname, [], 0.0, ""
 
-                stem_base = f"onc_{sanitize_stem(local_path.stem)}"
-                before = set(_processed_audio_outputs(audio_dir, stem_base))
-                seconds_ref = [0.0]
-                process_large_audio(
-                    src_path=local_path,
-                    out_dir=audio_dir,
-                    stem_base=stem_base,
-                    total_seconds_ref=seconds_ref,
-                    sr_target=sr_target,
-                    chunk_sec=chunk_sec,
-                    min_sample_rate=min_sample_rate,
-                )
-                after = set(_processed_audio_outputs(audio_dir, stem_base))
-                output_wavs = sorted(after - before, key=lambda p: str(p))
-                return True, fname, output_wavs, seconds_ref[0], ""
-            except Exception as e:
-                return False, fname, [], 0.0, f"error processing {fname}: {e}"
-            finally:
-                if delete_source_after and local_path is not None:
-                    try:
-                        local_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+            last_error = ""
+            for attempt in range(1, max_retries + 1):
+                try:
+                    worker_onc = ONC(token, outPath=str(tmp_dir))
+                    worker_onc.downloadArchivefile(fname, overwrite=False)
+                    local_path = tmp_dir / fname
+                    if not local_path.exists():
+                        hits = list(tmp_dir.rglob(Path(fname).name))
+                        if hits:
+                            local_path = hits[0]
+                    if local_path is None or not local_path.exists():
+                        raise FileNotFoundError(f"downloaded file not found: {fname}")
+
+                    before = set(_processed_audio_outputs(audio_dir, stem_base))
+                    seconds_ref = [0.0]
+                    process_large_audio(
+                        src_path=local_path,
+                        out_dir=audio_dir,
+                        stem_base=stem_base,
+                        total_seconds_ref=seconds_ref,
+                        sr_target=sr_target,
+                        chunk_sec=chunk_sec,
+                        min_sample_rate=min_sample_rate,
+                    )
+                    after = set(_processed_audio_outputs(audio_dir, stem_base))
+                    output_wavs = sorted(after - before, key=lambda p: str(p))
+                    return True, fname, output_wavs, seconds_ref[0], ""
+                except Exception as e:
+                    last_error = str(e)
+                    if local_path is not None:
+                        try:
+                            local_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                    if attempt < max_retries and retry_sleep_seconds > 0:
+                        time.sleep(retry_sleep_seconds * attempt)
+                finally:
+                    if delete_source_after and local_path is not None:
+                        try:
+                            local_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+
+            return (
+                False,
+                fname,
+                [],
+                0.0,
+                f"error processing {fname} after {max_retries} attempts: {last_error}",
+            )
 
         pbar = tqdm(total=len(files), desc=f"ONC {key_desc}")
         for ok, fname, new_wavs, seconds, message in iter_threaded(
