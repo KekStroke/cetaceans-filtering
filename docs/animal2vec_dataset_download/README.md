@@ -43,6 +43,49 @@ data_loading.sources.pacific_sound.download_workers=16
 data_loading.sources.onc.download_workers=16
 ```
 
+For large NOAA and Orcasound runs, shard processed WAV outputs so a single
+directory does not grow to hundreds of thousands or millions of files. The
+downloaders skip already-processed source files by scanning processed WAV stems,
+so this also keeps resume runs practical after an interrupted job:
+
+```bash
+data_loading.sources.noaa.output_files_per_folder=10000
+data_loading.sources.orcasound.output_files_per_folder=10000
+```
+
+For large Orcasound runs, keep both downloaded originals and processed WAVs
+sharded into bounded folders. `10000` is the default shard size and is a good
+starting point for shared filesystems:
+
+```bash
+data_loading.sources.orcasound.downloaded_files_per_folder=10000
+data_loading.sources.orcasound.output_files_per_folder=10000
+```
+
+To build a 32 kHz dataset without letting any immediate subfolder under the
+large `orcasounds/` prefix exceed the recovered 16 kHz `wholistener` file count,
+cap those subfolders explicitly:
+
+```bash
+uv run python utils/datasets_downloads/download_orcasound.py \
+  data_loading.raw_datasets_path="$SOURCE_ROOT" \
+  data_loading.raw_sample_rate=32000 \
+  data_loading.raw_skip_below_sample_rate=true \
+  data_loading.raw_segment_duration="$SEGMENT_SECONDS" \
+  data_loading.sources.orcasound.prefix_subfolder_file_limits='[{prefix: orcasounds/, max_files: 577014}]' \
+  data_loading.sources.orcasound.downloaded_files_per_folder=10000 \
+  data_loading.sources.orcasound.output_files_per_folder=10000
+```
+
+For ONC, use retries on long runs because individual downloads can fail
+transiently. The downloader resumes by skipping source files whose processed
+outputs already exist, so a retry run is safe after partial progress:
+
+```bash
+data_loading.sources.onc.max_retries=5
+data_loading.sources.onc.retry_sleep_seconds=10
+```
+
 Wait for all source downloads before building the combined manifest. If a source wrote WAV files but missed `manifest.jsonl`, rebuild that manifest first with `scripts/animal2vec_dataset/write_manifest_parallel.py`.
 
 ## Build animal2vec Layout

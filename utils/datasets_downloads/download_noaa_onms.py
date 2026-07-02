@@ -1,9 +1,11 @@
 import json
 import random
+import re
 import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -12,6 +14,8 @@ from audio_saver import process_large_audio, resolve_min_sample_rate, sanitize_s
 from manifest_utils import write_manifest
 from omegaconf import DictConfig
 from parallel_utils import iter_threaded
+
+CHUNK_SUFFIX_RE = re.compile(r"_[0-9]{5}$")
 
 
 def _normalize_prefix(value: str) -> str:
@@ -107,7 +111,39 @@ def _source_dir_from_prefix(out_dir: Path, prefix: str) -> Path:
 
 
 def _processed_audio_exists(processed_dir: Path, stem: str) -> bool:
-    return any(processed_dir.glob(f"{stem}*.wav"))
+    return any(processed_dir.rglob(f"{stem}*.wav"))
+
+
+def _processed_audio_outputs(processed_dir: Path, stem: str) -> List[Path]:
+    direct = processed_dir / f"{stem}.wav"
+    outputs: List[Path] = []
+    if direct.exists():
+        outputs.append(direct)
+    outputs.extend(sorted(processed_dir.rglob(f"{stem}_[0-9][0-9][0-9][0-9][0-9].wav")))
+    return sorted(set(outputs))
+
+
+def _processed_stem_index(processed_dir: Path) -> set[str]:
+    stems: set[str] = set()
+    for audio_path in processed_dir.rglob("*.wav"):
+        stem = CHUNK_SUFFIX_RE.sub("", audio_path.stem)
+        stems.add(stem)
+    return stems
+
+
+def _optional_positive_int(value: object, field_name: str) -> Optional[int]:
+    if value is None or str(value).strip().lower() in {"none", "null", ""}:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive integer or null")
+    return parsed
+
+
+def _shard_dir(root: Path, index: int, files_per_folder: Optional[int]) -> Path:
+    if files_per_folder is None:
+        return root
+    return root / f"shard_{index // files_per_folder:06d}"
 
 
 def _estimate_duration_seconds(
@@ -119,6 +155,24 @@ def _estimate_duration_seconds(
     bytes_per_sample = max(sample_bits // 8, 1)
     bytes_per_second = max(sample_rate_hz * channels * bytes_per_sample, 1)
     return float(size_bytes) / float(bytes_per_second)
+
+
+def _estimated_output_files(
+    size_bytes: int,
+    sample_rate_hz: int,
+    sample_bits: int,
+    channels: int,
+    chunk_sec: float,
+) -> int:
+    if chunk_sec == -1:
+        return 1
+    duration = _estimate_duration_seconds(
+        size_bytes=size_bytes,
+        sample_rate_hz=sample_rate_hz,
+        sample_bits=sample_bits,
+        channels=channels,
+    )
+    return max(1, ceil(duration / chunk_sec))
 
 
 def _download_file(
@@ -242,6 +296,10 @@ def main(config: DictConfig):
     channels = int(noaa_cfg.get("channels", 1))
     seed = int(noaa_cfg.get("random_seed", 42))
     download_workers = max(1, int(noaa_cfg.get("download_workers", 1)))
+    output_files_per_folder = _optional_positive_int(
+        noaa_cfg.get("output_files_per_folder"),
+        "data_loading.sources.noaa.output_files_per_folder",
+    )
 
     total_seconds = [0.0]
     total_downloaded_bytes = 0
@@ -256,6 +314,10 @@ def main(config: DictConfig):
         f"{max_files_per_deployment if max_files_per_deployment is not None else 'unlimited'}"
     )
     print(f"Download workers: {download_workers}")
+    print(
+        f"Output audio folder shard size: "
+        f"{output_files_per_folder if output_files_per_folder is not None else 'disabled'}"
+    )
     print(f"Chunking: {'disabled' if chunk_sec == -1 else f'{chunk_sec:.2f}s'}")
 
     for dep_idx, raw_prefix in enumerate(prefixes):
@@ -274,6 +336,7 @@ def main(config: DictConfig):
         dep_download_dir = source_downloads_dir
         dep_download_dir.mkdir(parents=True, exist_ok=True)
         source_audio_dir.mkdir(parents=True, exist_ok=True)
+        output_file_count = sum(1 for _ in source_audio_dir.rglob("*.wav"))
 
         print(f"\n=== {source_dir.relative_to(out_dir)} ===")
         print(f"Listing objects under: {prefix}")
@@ -285,6 +348,7 @@ def main(config: DictConfig):
             continue
 
         if only_new_files:
+            processed_stems = _processed_stem_index(source_audio_dir)
             new_only: List[Dict[str, int | str]] = []
             for item in audio_files:
                 object_name = str(item.get("name", ""))
@@ -296,7 +360,7 @@ def main(config: DictConfig):
                 already_downloaded = (
                     local_src.exists() and local_src.stat().st_size == size
                 )
-                already_processed = _processed_audio_exists(source_audio_dir, stem)
+                already_processed = stem in processed_stems
 
                 if already_downloaded or already_processed:
                     continue
@@ -326,6 +390,18 @@ def main(config: DictConfig):
             max_files=max_files_per_deployment,
         )
         print(f"Selected files: {len(selected)}")
+
+        output_offsets: List[int] = []
+        running_output_offset = output_file_count
+        for item in selected:
+            output_offsets.append(running_output_offset)
+            running_output_offset += _estimated_output_files(
+                size_bytes=int(item.get("size", 0)),
+                sample_rate_hz=sample_rate_hz,
+                sample_bits=sample_bits,
+                channels=channels,
+                chunk_sec=chunk_sec,
+            )
 
         def download_and_process(args: tuple[int, Dict[str, int | str]]):
             file_idx, item = args
@@ -358,9 +434,14 @@ def main(config: DictConfig):
 
             seconds = [0.0]
             try:
+                output_dir = _shard_dir(
+                    source_audio_dir,
+                    output_offsets[file_idx],
+                    output_files_per_folder,
+                )
                 process_large_audio(
                     src_path=local_src,
-                    out_dir=source_audio_dir,
+                    out_dir=output_dir,
                     stem_base=stem,
                     total_seconds_ref=seconds,
                     sr_target=sr_target,
