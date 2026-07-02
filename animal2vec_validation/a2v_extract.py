@@ -125,7 +125,7 @@ def sanitize_and_save(src, dst):
             with open_dict(mc): mc['skip_ema'] = True
     sd = ck.get('model', {})
     for k in list(sd.keys()):
-        if k == '_ema' or k.startswith('_ema') or k.startswith('ema.'):
+        if k == '_ema' or k.startswith('_ema') or k.startswith('ema.') or k.startswith('bestrq.'):
             del sd[k]
     # MEMORY-SAFE: drop ONLY the big Adam moments (~2.5GB). Keep small keys (optimizer_history,
     # extra_state, …) — fairseq's _upgrade_state_dict needs them to load.
