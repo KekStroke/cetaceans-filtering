@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+.venv*/
 
 # Local secrets and machine-specific paths
 .env
