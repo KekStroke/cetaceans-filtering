@@ -816,6 +816,224 @@ def event_metrics(
     }
 
 
+class FrameBiLSTM(torch.nn.Module):
+    """Sequence head that predicts one click logit per animal2vec embedding."""
+
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int) -> None:
+        super().__init__()
+        self.lstm = torch.nn.LSTM(
+            input_size,
+            hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.1 if num_layers > 1 else 0.0,
+        )
+        self.output = torch.nn.Linear(hidden_size * 2, 1)
+
+    def forward(self, sequence: torch.Tensor) -> torch.Tensor:
+        encoded, _ = self.lstm(sequence)
+        return self.output(encoded).squeeze(-1)
+
+
+class FrameMLP(torch.nn.Module):
+    """Independent per-frame nonlinear probe."""
+
+    def __init__(self, input_size: int, hidden_size: int) -> None:
+        super().__init__()
+        self.network = torch.nn.Sequential(
+            torch.nn.Linear(input_size, hidden_size),
+            torch.nn.GELU(),
+            torch.nn.Dropout(0.1),
+            torch.nn.Linear(hidden_size, 1),
+        )
+
+    def forward(self, sequence: torch.Tensor) -> torch.Tensor:
+        return self.network(sequence).squeeze(-1)
+
+
+def binary_focal_loss(logits: torch.Tensor, targets: torch.Tensor, alpha: float, gamma: float) -> torch.Tensor:
+    probabilities = torch.sigmoid(logits)
+    ce = torch.nn.functional.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    p_t = probabilities * targets + (1.0 - probabilities) * (1.0 - targets)
+    alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
+    return (alpha_t * (1.0 - p_t).pow(gamma) * ce).mean()
+
+
+def toa_sequence_items(
+    model: torch.nn.Module,
+    tasks: list[dict[str, Any]],
+    model_sr: int,
+    target_samples: int,
+    device: str,
+    layer_name: str,
+    hop_s: float,
+) -> Iterator[tuple[np.ndarray, np.ndarray, dict[str, Any]]]:
+    window_s = target_samples / model_sr
+    selected_layer_idx: int | None = None
+    for task in tasks:
+        starts = chunk_starts(float(task["duration"]), window_s, hop_s)
+        for start_s in starts:
+            wav = read_audio_window(task["path"], start_s, window_s, model_sr, target_samples)
+            sequences = embed_layer_sequences(model, wav, device)
+            if selected_layer_idx is None:
+                selected_layer_idx = layer_index_from_name(layer_name, len(sequences))
+            sequence = sequences[selected_layer_idx]
+            labels = frame_labels_for_toa(task["toa"], start_s, window_s, sequence.shape[0])
+            yield sequence, labels, {
+                "file": task["path"].name,
+                "chunk_start": float(start_s),
+                "window_seconds": float(window_s),
+            }
+        log(f"  sequence embeddings: {task['path'].name} ({len(starts)} chunks)")
+
+
+def validate_toa_checkpoint_neural(
+    ckpt_arg: Path,
+    args: argparse.Namespace,
+    train_tasks: list[dict[str, Any]],
+    test_tasks: list[dict[str, Any]],
+    dataset_meta: dict[str, Any],
+    run_name: str,
+) -> dict[str, Any]:
+    from sklearn.metrics import average_precision_score, balanced_accuracy_score, f1_score, roc_auc_score
+
+    device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
+    with checkpoint_path(ckpt_arg.resolve()) as ckpt_file:
+        model, ckpt_meta = load_feature_model(ckpt_file, device)
+        chronology = check_embedding_chronology(
+            model, ckpt_meta["sample_rate"], ckpt_meta["max_sample_size"], device, args.layer
+        )
+        if not chronology["chronological"]:
+            raise RuntimeError(f"{ckpt_arg.name}: animal2vec embeddings failed chronological-order check")
+
+        probe: torch.nn.Module | None = None
+        optimizer: torch.optim.Optimizer | None = None
+        train_frames = train_positive = train_chunks = 0
+        epoch_losses: list[float] = []
+        model.eval()
+        for epoch in range(args.bilstm_epochs):
+            total_loss = 0.0
+            epoch_chunks = 0
+            for sequence, labels, _ in toa_sequence_items(
+                model, train_tasks, ckpt_meta["sample_rate"], ckpt_meta["max_sample_size"],
+                device, args.layer, args.hop_seconds,
+            ):
+                if probe is None:
+                    if args.probe == "bilstm":
+                        probe = FrameBiLSTM(sequence.shape[1], args.bilstm_hidden_size, args.bilstm_layers).to(device)
+                    else:
+                        probe = FrameMLP(sequence.shape[1], args.mlp_hidden_size).to(device)
+                    optimizer = torch.optim.AdamW(probe.parameters(), lr=args.head_lr, weight_decay=1e-4)
+                assert optimizer is not None
+                probe.train()
+                features = torch.from_numpy(sequence).unsqueeze(0).to(device)
+                targets = torch.from_numpy(labels.astype(np.float32)).unsqueeze(0).to(device)
+                optimizer.zero_grad(set_to_none=True)
+                logits = probe(features)
+                loss = binary_focal_loss(logits, targets, args.focal_alpha, args.focal_gamma)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(probe.parameters(), 5.0)
+                optimizer.step()
+                total_loss += float(loss.detach().cpu())
+                epoch_chunks += 1
+                if epoch == 0:
+                    train_frames += int(len(labels))
+                    train_positive += int(labels.sum())
+                    train_chunks += 1
+                del features, targets, logits, loss
+            epoch_loss = total_loss / max(epoch_chunks, 1)
+            epoch_losses.append(epoch_loss)
+            log(f"{display_tag({'tag': ckpt_arg.stem, 'checkpoint_meta': ckpt_meta})} {args.probe.upper()} epoch {epoch + 1}/{args.bilstm_epochs}: focal_loss={epoch_loss:.6f}")
+
+        if probe is None:
+            raise RuntimeError("no train sequences collected for BiLSTM")
+        probe.eval()
+        y_parts: list[np.ndarray] = []
+        score_parts: list[np.ndarray] = []
+        frame_meta: list[dict[str, Any]] = []
+        test_chunks = 0
+        frame_dt_s = 0.0
+        with torch.inference_mode():
+            for sequence, labels, item in toa_sequence_items(
+                model, test_tasks, ckpt_meta["sample_rate"], ckpt_meta["max_sample_size"],
+                device, args.layer, args.hop_seconds,
+            ):
+                features = torch.from_numpy(sequence).unsqueeze(0).to(device)
+                scores = torch.sigmoid(probe(features))[0].float().cpu().numpy()
+                y_parts.append(labels)
+                score_parts.append(scores)
+                fps = sequence.shape[0] / item["window_seconds"]
+                frame_dt_s = 1.0 / fps
+                frame_meta.extend({
+                    "file": item["file"],
+                    "time": float(item["chunk_start"] + idx / fps),
+                    "frame": int(idx),
+                    "chunk_start": item["chunk_start"],
+                } for idx in range(sequence.shape[0]))
+                test_chunks += 1
+                del features
+
+    y_test = np.concatenate(y_parts)
+    score = np.concatenate(score_parts)
+    pred = (score >= 0.5).astype(np.int64)
+    tolerance_s = frame_dt_s / 2.0
+    frame_metrics: dict[str, float | None] = {
+        "macro_f1": float(f1_score(y_test, pred, average="macro")),
+        "positive_f1": float(f1_score(y_test, pred, pos_label=1)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_test, pred)),
+        "average_precision": float(average_precision_score(y_test, score)),
+    }
+    try:
+        frame_metrics["auc"] = float(roc_auc_score(y_test, score))
+    except ValueError:
+        frame_metrics["auc"] = None
+    events = event_metrics(
+        test_tasks, frame_meta, score, args.start_threshold, args.end_threshold,
+        args.min_sound_seconds, args.min_gap_seconds, tolerance_s, frame_dt_s,
+    )
+    result = {
+        "tag": ckpt_arg.stem,
+        "checkpoint": str(ckpt_arg),
+        "checkpoint_meta": ckpt_meta,
+        "chronology": chronology,
+        "task": f"{run_name}_toa_click_detection",
+        "primary_metric": "event_f1",
+        "probe": args.probe,
+        "probe_config": {
+            "hidden_size": args.bilstm_hidden_size if args.probe == "bilstm" else args.mlp_hidden_size,
+            "layers": args.bilstm_layers if args.probe == "bilstm" else 2,
+            "epochs": args.bilstm_epochs,
+            "learning_rate": args.head_lr,
+            "focal_alpha": args.focal_alpha,
+            "focal_gamma": args.focal_gamma,
+            "epoch_losses": epoch_losses,
+        },
+        "layer": args.layer,
+        "frame": frame_metrics,
+        "event": events,
+        "data": {
+            **dataset_meta,
+            "train_chunks": train_chunks,
+            "train_frames": train_frames,
+            "train_positive_frames": train_positive,
+            "test_chunks": test_chunks,
+            "test_frames": int(len(y_test)),
+            "test_positive_frames": int(y_test.sum()),
+            "train_files": [task["path"].name for task in train_tasks],
+            "test_files": [task["path"].name for task in test_tasks],
+            "window_seconds": ckpt_meta["max_sample_size"] / ckpt_meta["sample_rate"],
+            "hop_seconds": args.hop_seconds,
+            "frame_seconds": frame_dt_s,
+        },
+    }
+    log(f"{display_tag(result)} {args.probe.upper()} ToA: event-F1={events['event_f1']:.4f}, frame positive-F1={frame_metrics['positive_f1']:.4f}")
+    del model, probe
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return result
+
+
 def validate_toa_checkpoint(
     ckpt_arg: Path,
     args: argparse.Namespace,
@@ -921,6 +1139,7 @@ def write_toa_outputs(results: list[dict[str, Any]], out_dir: Path, run_name: st
     for result in results:
         rows.append({
             "checkpoint": display_tag(result),
+            "probe": result.get("probe", "logistic_regression"),
             "sample_rate": result["checkpoint_meta"]["sample_rate"],
             "layer": result["layer"],
             "event_f1": result["event"]["event_f1"],
@@ -962,8 +1181,9 @@ def write_toa_outputs(results: list[dict[str, Any]], out_dir: Path, run_name: st
         writer.writeheader()
         writer.writerows([{key: row[key] for key in chronology_fields} for row in rows])
 
-    labels = [row["checkpoint"] for row in rows]
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    probe_labels = {"logistic_regression": "LR", "mlp": "MLP", "bilstm": "BiLSTM"}
+    labels = [f"{row['checkpoint']}\n{probe_labels.get(row['probe'], row['probe'])}" for row in rows]
+    fig, axes = plt.subplots(1, 2, figsize=(max(12, 1.8 * len(rows)), 4.5))
     axes[0].bar(labels, [row["event_f1"] for row in rows], color="#4477aa")
     axes[0].set_title("Event F1 with tolerance")
     axes[0].set_ylim(0, 1)
@@ -977,15 +1197,12 @@ def write_toa_outputs(results: list[dict[str, Any]], out_dir: Path, run_name: st
     fig.savefig(out_dir / f"{run_name}_toa_validation.png", dpi=160)
     plt.close(fig)
 
-    table_columns = [
-        "checkpoint", "event_f1", "event_precision", "event_recall",
-        "frame_positive_f1", "average_precision", "tolerance_s",
-    ]
-    table_labels = ["Checkpoint", "Event F1", "Precision", "Recall", "Frame F1", "AP", "Tolerance, s"]
+    table_labels = ["Checkpoint", "Probe", "Event F1", "Precision", "Recall", "Frame F1", "AP", "Tolerance, s"]
     table_data = []
     for row in rows:
         table_data.append([
             row["checkpoint"],
+            probe_labels.get(row["probe"], row["probe"]),
             f"{row['event_f1']:.4f}",
             f"{row['event_precision']:.4f}",
             f"{row['event_recall']:.4f}",
@@ -1019,6 +1236,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", default="dominica_toa", help="name used in output filenames")
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
     parser.add_argument("--layer", default="final", help="animal2vec layer to use: final or L0/L1/...")
+    parser.add_argument("--probe", choices=("lr", "mlp", "bilstm"), default="lr",
+                        help="classifier trained on frozen animal2vec embeddings")
     parser.add_argument("--hop-seconds", type=float, default=5.0, help="chunk hop; 5..9 seconds is typical for 10s/8k windows")
     parser.add_argument("--test-fraction", type=float, default=0.25, help="train/test split by audio files")
     parser.add_argument("--start-threshold", type=float, default=0.8, help="probability threshold that starts a predicted click segment")
@@ -1031,6 +1250,15 @@ def parse_args() -> argparse.Namespace:
                         help="sampled train negatives per positive; all positive frames are retained")
     parser.add_argument("--max-train-frames", type=int, default=0, help="0 means no cap after train negative sampling")
     parser.add_argument("--max-test-frames", type=int, default=0, help="0 means evaluate all collected test frames")
+    parser.add_argument("--head-epochs", dest="bilstm_epochs", type=int, default=1,
+                        help="training epochs for MLP/BiLSTM heads")
+    parser.add_argument("--head-lr", type=float, default=1e-3)
+    parser.add_argument("--mlp-hidden-size", type=int, default=256)
+    parser.add_argument("--bilstm-hidden-size", type=int, default=128)
+    parser.add_argument("--bilstm-layers", type=int, default=1)
+    parser.add_argument("--focal-alpha", type=float, default=0.95,
+                        help="positive-class alpha for frame focal loss")
+    parser.add_argument("--focal-gamma", type=float, default=2.0)
     parser.add_argument("--split-seed", type=int, default=42)
     return parser.parse_args()
 
@@ -1052,7 +1280,11 @@ def main() -> None:
     results = []
     out_dir = args.out_dir / run_name
     for ckpt in args.checkpoints:
-        results.append(validate_toa_checkpoint(ckpt, args, train_tasks, test_tasks, dataset_meta, run_name))
+        if args.probe == "lr":
+            result = validate_toa_checkpoint(ckpt, args, train_tasks, test_tasks, dataset_meta, run_name)
+        else:
+            result = validate_toa_checkpoint_neural(ckpt, args, train_tasks, test_tasks, dataset_meta, run_name)
+        results.append(result)
         write_toa_outputs(results, out_dir, run_name)
 
 
