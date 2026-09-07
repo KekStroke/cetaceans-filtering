@@ -1,12 +1,14 @@
 # Tested animal2vec training stack.
 #
-# Use Python 3.10. Install the torch/torchaudio wheels that match your CUDA
-# runtime first if these PyPI wheels are not appropriate for your machine:
+# Use Python 3.10 and pip 24.0. Install the torch/torchaudio wheels that match
+# your CUDA runtime before this file:
 #   pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
-torch==2.2.2
-torchaudio==2.2.2
-fairseq==0.12.2
+#
+# Install Fairseq separately, after torch and before this file:
+#   pip install --no-build-isolation "git+https://github.com/facebookresearch/fairseq.git@920a548ca770fb1a951f7f4289b4d3a0c1bc226f"
+# The PyPI fairseq 0.12.2 package is not an equivalent source snapshot.
 h5py==3.10.0
+cython==3.2.5
 hydra-core==1.0.7
 intervaltree==3.1.0
 iopath==0.1.10
