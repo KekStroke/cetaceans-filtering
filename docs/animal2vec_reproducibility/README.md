@@ -84,6 +84,44 @@ For audit only, the historical ML Space locations were:
 
 These paths are provenance evidence, not runnable defaults.
 
+## Recovered run artifacts
+
+The retained Hydra output directories are listed below. Each contains the
+resolved `.hydra` configuration and the Fairseq training log; the paths are
+historical evidence and are not used as defaults by this repository.
+
+| Run | Historical output directory |
+| --- | --- |
+| first fp16 run | `/mnt/shared_ru.ml.SZ-2_000180/Iskhakov/animal2vec/outputs/2026-05-13/08-53-25` |
+| 8 kHz resume from 7,500 | `/mnt/shared_ru.ml.SZ-2_000180/Iskhakov/animal2vec/outputs/2026-06-13/13-36-07` |
+| 8 kHz, lr 4e-5 | `/mnt/shared_ru.ml.SZ-2_000180/Iskhakov/animal2vec/outputs/2026-06-14/17-45-26` |
+| 8 kHz resume from 13,581, lr 1e-4 | `/mnt/shared_ru.ml.SZ-2_000180/Iskhakov/animal2vec/outputs/2026-06-15/20-49-05` |
+| 16 kHz r2 | `/mnt/shared_ru.ml.SZ-2_000180/Iskhakov/cetaceans-filtering/outputs/2026-06-26/21-41-03` |
+
+The previously unknown TensorBoard locations were recovered as
+`.../animal2vec/outputs/2026-05-13/08-53-25/tb` for the first fp16 run and
+`.../animal2vec/outputs/2026-06-12/08-47-39/tb` for the stopped orange run.
+The preserved handoff also contains the blue lr 5e-5, lr 4e-5, resume13,581,
+and 16 kHz r2 event directories.
+
+On 8 September 2026, the original fp16, lr 5e-5, lr 4e-5, resume7,500, and
+resume13,581 checkpoint directories were no longer present. Their complete
+historical checkpoint listings therefore cannot be reconstructed. The files
+that survived in `models/animal2vec/selected_checkpoints` are enumerated in its
+`MANIFEST.md`; the manifest also names some earlier files that had already
+been pruned and should not be mistaken for a current disk listing.
+
+The live 16 kHz run directory retained `checkpoint1.pt` through
+`checkpoint4.pt`, updates 122k-129k, and `checkpoint_last.pt`. Its `validated`
+directory additionally retained 92k, 108k, 117k, and 121k-129k. All of
+`BEST.pt`, `BEST_WATKINS.pt`, `BEST_KCLASS.pt`, and `BEST_COMPOSITE.pt` point
+to 129k; `BEST_FILTER.pt` points to 92k. Thus checkpoints after 27k are
+confirmed, through update 129,000.
+
+The later 32 kHz run at
+`models/animal2vec/runs/a2v_32khz_2p5s_wholistener_scratch_lr1e4_20260704`
+retained `checkpoint1.pt`, updates 113k-120k, and `checkpoint_last.pt`.
+
 ## 16 kHz training lineage
 
 The initial run and three continuations form the productive lineage. Update
@@ -131,10 +169,25 @@ unsaved tails.
 
 `torch_compile=false` in the initial 16 kHz run and all continuation jobs.
 The reported roughly three-fold per-update comparison is therefore not a
-`torch.compile` speedup. It came from the 5-second clip run and a different
-corpus/run definition; it is not a controlled sample-rate benchmark and must
-not be used directly to budget a sample-rate ablation. Benchmark paired clips
-from the common 32 kHz parent instead.
+`torch.compile` speedup. Nor can it be attributed mechanically to five-second
+clips: both compared recipes use 80,000 input samples per clip, about 80 source
+clips per optimizer update, `clone_batch=3`, and `update_freq=10`. The 16 kHz
+run represents half as many seconds of sound per update, but essentially the
+same number of input samples seen by the model.
+
+The retained runs differ in code and runtime (Torch 1.13 versus the Torch 2
+port), optimizer wrapper (composite versus Adam), data layout/I/O, and enabled
+A100 compatibility speedups. The logs do not contain a controlled timing
+ablation that separates these effects. The only defensible budget is therefore
+a short paired benchmark using identical 32 kHz-parent rows, sample counts,
+batching, code, and hardware.
+
+All retained multi-GPU bf16 runs identify two NVIDIA A100-SXM4-80GB devices;
+the first fp16 experiment used one A100-SXM4-80GB. The JSON logs also disprove
+the blanket claim that clipping was 100% for every run: clipped-record counts
+were 200/200 for resume7,500, 199/318 for lr 4e-5, 829/2,436 for
+resume13,581, and 581/597 for the initial 16 kHz run. Gradient clipping is a
+material confound, but it was not constant across all comparisons.
 
 ## Watkins scores in checkpoint names
 
