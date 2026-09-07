@@ -2,6 +2,10 @@ FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
 WORKDIR /workspace/cetaceans-filtering
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY animal2vec/requirements-torch2.txt /tmp/animal2vec-requirements.txt
 RUN python -m pip install --no-cache-dir "pip==24.0" setuptools wheel \
     && python -m pip install --no-cache-dir numpy==1.23.5 cython==3.2.5 \

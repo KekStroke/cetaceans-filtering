@@ -26,7 +26,7 @@ jobs:
       - name: Install the pinned training stack
         run: |
           python -m pip install "pip==24.0" setuptools wheel
-          python -m pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install torch==2.2.2 torchaudio==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cpu
           python -m pip install numpy==1.23.5 cython==3.2.5
           python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/fairseq.git@920a548ca770fb1a951f7f4289b4d3a0c1bc226f"
           python -m pip install -r animal2vec/requirements-torch2.txt

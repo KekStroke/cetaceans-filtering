@@ -29,7 +29,7 @@ Use Python 3.10. The pinned stack tested for Torch 2 training is in
 python3.10 -m venv .venv-animal2vec
 source .venv-animal2vec/bin/activate
 python -m pip install "pip==24.0" setuptools wheel
-python -m pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install torch==2.2.2 torchaudio==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cu121
 python -m pip install numpy==1.23.5 cython==3.2.5
 python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/fairseq.git@920a548ca770fb1a951f7f4289b4d3a0c1bc226f"
 python -m pip install -r animal2vec/requirements-torch2.txt
