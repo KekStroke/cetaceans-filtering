@@ -3,7 +3,7 @@ FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 WORKDIR /workspace/cetaceans-filtering
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY animal2vec/requirements-torch2.txt /tmp/animal2vec-requirements.txt
