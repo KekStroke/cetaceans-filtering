@@ -1,7 +1,7 @@
 [project]
 name = "cetaceans-filtering"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible pipelines for cetacean audio filtering and representation learning"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

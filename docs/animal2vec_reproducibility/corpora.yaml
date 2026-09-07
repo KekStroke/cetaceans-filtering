@@ -1,0 +1,161 @@
+schema_version: 1
+hash_definition:
+  raw_sha256: SHA-256 of the decompressed TSV bytes
+  gzip_sha256: SHA-256 of the retained distributed gzip bytes
+path_definition:
+  logical_root: Resolve this identifier beneath an operator-supplied corpus root.
+  manifest_paths: Paths are relative to logical_root.
+comparison:
+  controlled_sample_rate_ablation: false
+  reason: Source rows and clip policies differ across the three retained corpora.
+  recommended_parent: cetaceans_32khz_2p5s_2026-07-04_wholistener_trainready_a2v
+
+corpora:
+  - id: 8khz_10s_20260605
+    logical_root: cetaceans_8khz_10s_2026-06-05_a2v
+    sample_rate_hz: 8000
+    clip_policy:
+      max_samples: 80000
+      max_seconds: 10
+      exact_length: false
+    totals:
+      rows: 1146279
+      samples: 88984995582
+      hours: 3089.756791042
+    sources:
+      noaa_onms:
+        rows: 642734
+        samples: 51403411609
+        hours: 1784.840680868
+      onc:
+        rows: 106651
+        samples: 8532002000
+        hours: 296.250069444
+      orcasound:
+        rows: 241374
+        samples: 16607981973
+        hours: 576.666040729
+      pacific_sound:
+        rows: 155520
+        samples: 12441600000
+        hours: 432.000000000
+    manifests:
+      pretrain:
+        relative_path: manifest/pretrain.tsv
+        data_rows: 1146279
+        total_lines_including_root: 1146280
+        raw_sha256: b850db76f42dd672bbbab2f640b869f2750ab09ae8b877f1d06501dbc3500a4c
+        gzip:
+          filename: 8khz_10s_pretrain.tsv.gz
+          size_bytes: 3856896
+          sha256: c8ca187b81427b58541d0042feeb716f10741578a4fdb1c40d33d1f1cd635da4
+      valid_0:
+        relative_path: manifest/valid_0.tsv
+        data_rows: 0
+        total_lines: 0
+        raw_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        gzip:
+          filename: 8khz_10s_valid_0.tsv.gz
+          size_bytes: 32
+          sha256: adf2a2d2ea103a723a9ae00b7d827aa71e33cf2cf08a648fecf84e233a290d64
+
+  - id: 16khz_5s_r2_20260625
+    logical_root: cetaceans_16khz_5s_2026-06-25_a2v
+    sample_rate_hz: 16000
+    clip_policy:
+      samples: 80000
+      seconds: 5
+      exact_length: true
+    totals:
+      rows: 2550424
+      samples: 204033920000
+      hours: 3542.255555556
+    sources:
+      noaa_onms:
+        rows: 1284899
+        samples: 102791920000
+        hours: 1784.581944444
+      onc:
+        rows: 205260
+        samples: 16420800000
+        hours: 285.083333333
+      orcasound:
+        rows: 754205
+        samples: 60336400000
+        hours: 1047.506944444
+      pacific_sound:
+        rows: 306060
+        samples: 24484800000
+        hours: 425.083333333
+    manifests:
+      pretrain:
+        relative_path: manifest/pretrain.tsv
+        data_rows: 2550424
+        total_lines_including_root: 2550425
+        raw_sha256: f8e0a73ade5ebc9ee57537281cdfc1621fa7d85cadc51472028d76e7b6f3a3b0
+        gzip:
+          filename: 16khz_5s_r2_pretrain.tsv.gz
+          size_bytes: 8598991
+          sha256: c31642c71e1f60e46473d5ccc49aa6c4cc48e638a51ce4fed315d9d6fdfaa784
+      valid_0:
+        relative_path: manifest/valid_0.tsv
+        data_rows: 0
+        total_lines: 0
+        raw_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        gzip:
+          filename: 16khz_5s_r2_valid_0.tsv.gz
+          size_bytes: 32
+          sha256: 25b663eaa66ef75fff67b07e53adc582cd894ec243cc1424460af97f40abd33a
+
+  - id: 32khz_2p5s_final_20260704
+    logical_root: cetaceans_32khz_2p5s_2026-07-04_wholistener_trainready_a2v
+    sample_rate_hz: 32000
+    clip_policy:
+      samples: 80000
+      seconds: 2.5
+      exact_length: true
+      skip_native_below_sample_rate: true
+    build:
+      source_preparation_date: 2026-07-02
+      completed_at: 2026-07-04T10:01:36+03:00
+      complete_native_rate_downloads_retained: false
+    totals:
+      rows: 4854162
+      samples: 388332960000
+      hours: 3370.945833333
+    sources:
+      noaa_onms:
+        rows: 2744345
+        samples: 219547600000
+        hours: 1905.795138889
+      onc:
+        rows: 424800
+        samples: 33984000000
+        hours: 295.000000000
+      orcasound:
+        rows: 1069970
+        samples: 85597600000
+        hours: 743.034722222
+      pacific_sound:
+        rows: 615047
+        samples: 49203760000
+        hours: 427.115972222
+    manifests:
+      pretrain:
+        relative_path: manifest/pretrain.tsv
+        data_rows: 4854162
+        total_lines_including_root: 4854163
+        raw_sha256: 9e85eb4282aa4130820b854723b18f618b1d6a7aad7057846f696d521ad40d65
+        gzip:
+          filename: 32khz_2p5s_pretrain.tsv.gz
+          size_bytes: 15256228
+          sha256: 317b51b32bff97dd9f58bb888e96371353fbd5dd1fabaf3ce17469d5c83409a5
+      valid_0:
+        relative_path: manifest/valid_0.tsv
+        data_rows: 0
+        total_lines: 0
+        raw_sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        gzip:
+          filename: 32khz_2p5s_valid_0.tsv.gz
+          size_bytes: 32
+          sha256: b1cb85aeacebcb19c2a96045d8cdd224f3dbc08cc084857f812c1d6ae12df305

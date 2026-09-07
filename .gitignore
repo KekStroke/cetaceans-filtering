@@ -6,6 +6,11 @@ dist/
 wheels/
 *.egg-info
 
+# Model checkpoints and training telemetry
+*.pt
+*.ckpt
+events.out.tfevents*
+
 # Virtual environments
 .venv
 

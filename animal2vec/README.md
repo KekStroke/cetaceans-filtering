@@ -49,6 +49,10 @@ OmegaConf metadata required by this Fairseq revision.
 
 ## Data
 
+For the audited 8, 16, and 32 kHz corpus sizes, hashes, source composition, and
+the recovered training lineage, see the
+[animal2vec reproducibility record](../docs/animal2vec_reproducibility/README.md).
+
 The portable configs expect this Fairseq-style manifest directory by default:
 
 ```text
