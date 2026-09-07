@@ -154,6 +154,23 @@ def test_all_flags_together_forward_backward():
                for p in blk.parameters() if p.requires_grad)
 
 
+def test_torch22_rmsnorm_fallback():
+    from animal2vec.nn.data2vec2 import _CompatRMSNorm
+
+    x = torch.randn(B, N, DIM, device=DEV, requires_grad=True)
+    norm = _CompatRMSNorm(DIM, eps=1e-5).to(DEV)
+    got = norm(x)
+    expected = x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + 1e-5)
+    assert torch.allclose(got, expected, atol=1e-6)
+    got.square().mean().backward()
+    assert norm.weight.grad is not None and torch.isfinite(norm.weight.grad).all()
+    low_precision = _CompatRMSNorm(DIM, eps=1e-5, dtype=torch.bfloat16)
+    low_precision = low_precision.to(DEV)
+    low_precision_out = low_precision(x.detach().to(torch.bfloat16))
+    assert low_precision_out.dtype == torch.bfloat16
+    assert torch.isfinite(low_precision_out).all()
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     n_fail = 0

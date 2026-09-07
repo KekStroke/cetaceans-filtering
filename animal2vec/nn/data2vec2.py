@@ -48,6 +48,41 @@ from animal2vec.nn import (
 logger = logging.getLogger(__name__)
 
 
+class _CompatRMSNorm(nn.Module):
+    """Torch 2.2-compatible RMSNorm with the same interface used here."""
+
+    def __init__(
+        self,
+        normalized_shape,
+        eps=1e-6,
+        elementwise_affine=True,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = tuple(normalized_shape)
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if elementwise_affine:
+            self.weight = nn.Parameter(
+                torch.ones(self.normalized_shape, device=device, dtype=dtype)
+            )
+        else:
+            self.register_parameter("weight", None)
+
+    def forward(self, x):
+        dims = tuple(range(-len(self.normalized_shape), 0))
+        xf = x.float()
+        y = xf * torch.rsqrt(xf.pow(2).mean(dim=dims, keepdim=True) + self.eps)
+        y = y.to(dtype=x.dtype)
+        return y if self.weight is None else y * self.weight
+
+
+RMSNorm = getattr(nn, "RMSNorm", _CompatRMSNorm)
+
+
 @dataclass
 class D2vModalitiesConfig(FairseqDataclass):
     audio: D2vAudioConfig = D2vAudioConfig()
@@ -134,7 +169,8 @@ class Data2VecMultiConfig(FairseqDataclass):
                           "default in Llama/most 2024-26 LLMs; drops the mean-centering and bias, "
                           "slightly cheaper and empirically as good/better). Applies to the "
                           "transformer blocks + prenet + final encoder norm; the SincNet frontend "
-                          "keeps its own norms. Requires torch>=2.4 for nn.RMSNorm."},
+                          "keeps its own norms. Uses nn.RMSNorm when available and a Torch 2.2 "
+                          "compatible fallback otherwise."},
     )
 
     # --- BEST-RQ objective (Chung et al. 2021 / USM) --------------------------------------------
@@ -297,9 +333,9 @@ class Data2VecMultiModel(BaseFairseqModel, FusedSegmentationMixin):
         norm_type = getattr(cfg, "norm_type", "layernorm")
         if norm_type == "rmsnorm":
             # RMSNorm (Zhang & Sennrich 2019): no mean-centering, no bias — the modern default.
-            # torch>=2.4 ships nn.RMSNorm; _init_weights leaves it at its correct default (weight=1).
+            # _init_weights leaves RMSNorm at its correct default (weight=1).
             make_layer_norm = partial(
-                nn.RMSNorm, eps=cfg.norm_eps, elementwise_affine=cfg.norm_affine
+                RMSNorm, eps=cfg.norm_eps, elementwise_affine=cfg.norm_affine
             )
         elif norm_type == "layernorm":
             make_layer_norm = partial(
