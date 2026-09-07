@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata in this file."
+title: "cetaceans-filtering"
+type: software
+authors:
+  - name: "cetaceans-filtering contributors"
+version: "0.1.0"
+repository-code: "https://github.com/KekStroke/cetaceans-filtering"
+license: MIT

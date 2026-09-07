@@ -2,6 +2,8 @@
 
 Cetacean audio filtering and classification built on [Perch](https://github.com/google-research/perch-hoplite) embeddings.
 
+[License](LICENSE) | [Citation](CITATION.cff) | [Data sources](DATA_SOURCES.md) | [Third-party notices](THIRD_PARTY_NOTICES.md)
+
 ## Setup
 
 ```powershell
