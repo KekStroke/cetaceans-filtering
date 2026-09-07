@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KekStroke/cetaceans-filtering/schemas/animal2vec-validation-split-v1.json",
+  "title": "animal2vec canonical validation split manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "protocol_id", "dataset", "splits", "protocol"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "protocol_id": {"type": "string", "minLength": 1},
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "revision", "record_id_field", "artifacts", "source_partitions"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "record_id_field": {"type": "string", "minLength": 1},
+        "artifacts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "source_partitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["train", "test"],
+          "properties": {
+            "train": {"type": "string", "minLength": 1},
+            "test": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "splits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["train", "validation", "test"],
+      "properties": {
+        "train": {"$ref": "#/$defs/record_ids"},
+        "validation": {"$ref": "#/$defs/record_ids"},
+        "test": {"$ref": "#/$defs/record_ids"}
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mask", "pooling", "layer_selection", "selection_metric", "seed", "classifier"],
+      "properties": {
+        "mask": {"const": false},
+        "pooling": {"const": "mean"},
+        "layer_selection": {"const": "validation"},
+        "selection_metric": {"const": "macro_f1"},
+        "seed": {"type": "integer"},
+        "classifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "C", "class_weight", "max_iter", "solver"],
+          "properties": {
+            "name": {"const": "logistic_regression"},
+            "C": {"type": "number", "exclusiveMinimum": 0},
+            "class_weight": {"enum": ["balanced", null]},
+            "max_iter": {"type": "integer", "minimum": 1},
+            "solver": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

@@ -1,65 +1,62 @@
-# animal2vec checkpoint validation (turnkey)
+# Canonical animal2vec checkpoint validation
 
-A single `validate.py` — drop in a `data2vec_multi` pretraining checkpoint, get a frozen-probe validation on
-modern torch 2.x + GPU. Loads **losslessly by weights** (sanitizes fork cfg keys like `multi_corpus_keys`,
-sets `skip_ema`, drops the EMA teacher, patches version-mismatched fairseq fns). Memory-safe: slim 1.3 GB
-checkpoint, 10 s/8 kHz input cap, **one model per process**.
-
-## Install
-Follow the **ordered recipe in [`requirements.txt`](requirements.txt)** (Python 3.10, verified end-to-end).
-A flat `pip install -r` does **not** work — legacy fairseq 0.12.2 needs omegaconf 2.0.x, whose wheel has a
-non-standard metadata specifier (`PyYAML>=5.1.*`) that **pip ≥ 24.1 rejects** (the resolve dies with
-"Cannot install fairseq … omegaconf<2.1"). The standard fix across the fairseq/RVC ecosystem:
+Publication-facing Watkins scores use one entry point:
 
 ```bash
-pip install "pip==24.0"          # the fix (venv-local pin, not -U pip). pip 24.0 still accepts the old metadata
+python -m animal2vec.validation watkins \
+  --checkpoint checkpoints/checkpoint.pt \
+  --data-dir data/watkins-arrow \
+  --split-manifest manifests/watkins-split-v1.json \
+  --output outputs/animal2vec/validation/result.json
 ```
-then install fairseq first (it pulls omegaconf 2.0.6 / hydra 1.0.7), override `torch/vision/audio` from the
-CUDA index, then the rest + the animal2vec `nn` deps (`tensorflow timm scikit-image intervaltree iopath`).
-Put the repo on `PYTHONPATH` via `A2V_REPO` (it registers `data2vec_multi`); validate.py's runtime shims
-bridge the old fairseq API to torch 2.x. (Don't want to pin pip? `uv pip install …` the same list — uv
-tolerates the old metadata on current pip.)
 
-## Usage
+The runtime reads `sample_rate`, `max_sample_size`, and normalization from the
+checkpoint config. Missing or contradictory values are errors. Every encoder
+call is made through `animal2vec.validation.runtime.extract_features`, which
+always passes `mask=False`.
+
+## Fixed protocol
+
+The split manifest must conform to
+[`split_manifest.schema.json`](../../../configs/animal2vec_validation/split_manifest.schema.json).
+It names every recording in non-overlapping `train`, `validation`, and `test`
+lists and pins the source Arrow files by SHA256. Machine-local paths are not
+valid recording IDs. No real IDs are included in the repository until the
+audited dataset split is available; do not generate a replacement split during
+a validation run.
+
+Validate an audited manifest before scheduling GPU work:
+
 ```bash
-cd "$A2V_REPO"                      # the animal2vec repo (registers data2vec_multi); default ~/a2v
-PY=~/a2v_env/bin/python             # torch 2.x + cu12 + fairseq 0.12.2 + the shims
-V=/path/to/validate.py
-
-$PY $V slim    <raw.pt> [--out S.pt]                                           # raw ~5GB ckpt → ~1.3GB inference ckpt
-$PY $V watkins <ckpt> [--run blue --step 30000] [--no-baselines] [--limit N]   # 31-way species + clustering
-$PY $V filter  <ckpt> [--run blue --step 30000] [--no-baselines] [--limit N]   # binary signal/noise
-$PY $V shap    <ckpt> [--limit N]                                              # frequency-band attribution → PNG
-$PY $V kclass  <ckpt> [--n-per-class N]                                        # per-layer probe on K-class
-$PY $V dynamics                                                                # plot accumulated runs/steps
+python -m animal2vec.validation check-manifest watkins-split-v1.json \
+  --data-dir data/watkins-arrow
 ```
-- `watkins`/`filter` accumulate results and, with `--run/--step`, register the checkpoint — then `dynamics`
-  plots the comparison across runs/steps (decide which parallel run to keep). One model per process, so to
-  compare runs just call `watkins`/`filter` once per checkpoint, then `dynamics`.
-- `--no-baselines` skips the AVES-8k / log-mel-8k calibration; `--limit N` caps clips for a fast smoke run.
-- Outputs (JSON + PNG) go to `$A2V_OUT` (default `./a2v_val_results`) — regenerated per run, **not** checked in.
-- **Memory:** run **one checkpoint at a time** (each loads ~1.3 GB). To sweep several, call `watkins`/`filter`
-  per checkpoint sequentially, then `dynamics` — don't run them concurrently. On a tight box wrap the loop
-  with a `free -m`/`pkill` watchdog.
 
-## Config (env vars — point these at your data/weights)
-| var | default | meaning |
-|---|---|---|
-| `A2V_REPO` | `~/a2v` | animal2vec repo (for `import nn`) |
-| `A2V_OUT` | `./a2v_val_results` | where JSON/PNG outputs go |
-| `A2V_KCLASS` | `data/kclass_wavs` | dir of labelled K-class `.wav` clips |
-| `A2V_WATKINS` | `data/beans_watkins` | BEANS Watkins arrow dir (train/test) |
-| `A2V_AVES` | `weights/aves-base-bio.torchaudio` | AVES torchaudio weights prefix (`.pt`/`.json`) |
+For every checkpoint the validator:
 
-## ⚠️ Extract features with `mask=False`
-data2vec masks ~93 % of the input by default (`mask=True`); extracting probe features that way collapses
-them. `validate.py` calls the encoder with `mask=False` (clean, unmasked, **deterministic**) — the
-canonical frozen-probe path. An earlier run that left masking on produced a spuriously "undertrained" read;
-the numbers below are the corrected, mask-off ones.
+1. fits one frozen linear probe per encoder layer on `train`;
+2. selects the layer by validation macro-F1 only;
+3. refits that layer on `train + validation`;
+4. evaluates the held-out test split once.
 
-## Verdict (checkpoints 13.5k & 25k, clean features)
-The encoder is **strong already at ~8 % of training**: Watkins species (31-way) **13.5k 0.795 → 25k 0.839**
-(rising) — far above the 8 kHz log-mel baseline (0.675) and **matching AVES-8k (0.853)**, a domain-trained
-SSL reference. Signal/noise filtration **0.81** (near-ceiling for every encoder; just under log-mel 0.90).
-SHAP attribution **tracks the call energy** (attr-vs-energy r ≈ 0.73). → healthy run; keep training and
-re-probe later checkpoints; for the headline evaluate on 16 kHz / species where 8 kHz isn't the limiter.
+Use `--selection-only` while ranking training checkpoints. Test scores must not
+be used to choose a layer, checkpoint, threshold, or configuration.
+
+The result JSON includes the code commit and dirty flag; checkpoint, embedded
+config, split-manifest, and dataset-artifact hashes; checkpoint update/epoch/SR;
+the exact classifier config; package versions; validation scores; and the one
+held-out test score. Absolute checkpoint, dataset, and output paths are rejected
+from serialized results.
+
+## Environment
+
+Install the pinned animal2vec environment from `animal2vec/README.md`, then the
+small validation-only additions from `requirements.txt`. The old PyPI
+`fairseq==0.12.2` recipe is not equivalent to the pinned Fairseq source commit.
+
+## Historical utility
+
+`validate.py` remains temporarily available for checkpoint slimming, live
+watching, K-class/filter diagnostics, and band occlusion. Its accumulated
+best-layer-on-test Watkins numbers are exploratory and must not be used as the
+paper's canonical score.
