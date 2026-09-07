@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  animal2vec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: animal2vec/requirements-torch2.txt
+      - name: Install the pinned training stack
+        run: |
+          python -m pip install "pip==24.0" setuptools wheel
+          python -m pip install torch==2.2.2 torchaudio==2.2.2 torchvision==0.17.2 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==1.23.5 cython==3.2.5
+          python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/fairseq.git@920a548ca770fb1a951f7f4289b4d3a0c1bc226f"
+          python -m pip install -r animal2vec/requirements-torch2.txt
+          python -m pip check
+      - name: Run architecture and objective tests
+        run: |
+          python animal2vec/tests/test_arch_flags.py
+          python animal2vec/tests/test_bestrq.py
+      - name: Compose the training config
+        run: python -m animal2vec.train --cfg job common.cpu=true distributed_training.distributed_backend=gloo
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the clean training image
+        run: docker build -f animal2vec/Dockerfile -t cetaceans-filtering-animal2vec:ci .
