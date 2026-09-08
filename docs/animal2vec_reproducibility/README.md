@@ -218,6 +218,18 @@ historical run cannot be recovered from any retained artifact.
 
 ## Watkins scores in checkpoint names
 
+### Canonical validation resource budget
+
+Thirty-three completed legacy Watkins validations on an A100 took 401.7 to
+504.9 seconds each. A later uncontended series for updates 123k-128k took
+362.9 to 379.4 seconds, while the 129k watcher took 566.7 seconds alongside
+training. Those runs extracted 17 representations for 1,697 examples. The
+canonical split has 1,656 examples, retains the 17 validation probes and one
+final refit, and removes the legacy clustering diagnostics. A defensible
+single-checkpoint budget is therefore 6-10 minutes of A100 compute, with 12
+minutes reserved for normal execution and a 20-minute hard stop
+(0.333 A100-hours) covering startup and artifact hashing.
+
 The legacy 0.89-0.91 values are exploratory, **not publication-canonical**.
 The naming harness used the fixed BEANS Watkins train/test split (1,357 train,
 340 test, 32 observed classes), disabled masking, extracted L0-L15 plus the
