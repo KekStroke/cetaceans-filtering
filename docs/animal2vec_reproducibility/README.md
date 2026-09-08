@@ -6,6 +6,18 @@ manifests, resolved Hydra configs, JSON training logs, and the final 16 kHz
 checkpoint. Large checkpoints, TensorBoard event files, and generated
 validation reports are deliberately not committed.
 
+## Reproducibility artifact bundle
+
+The retained manifests, Hydra outputs, continuation logs, TensorBoard events,
+legacy validation reports, and three requested checkpoints are available in a
+[public read-only Yandex Disk bundle](https://disk.yandex.ru/d/g0jLmhvokf35_A).
+The snapshot was prepared on 8 September 2026 and contains 438 files totaling
+15,202,126,978 bytes. Start with the bundle's `README.md`. Its
+`SHA256SUMS.txt` contains 437 entries and covers every delivered file except
+the checksum index itself; `INVENTORY.tsv` lists the 436 payload files.
+Git remains the canonical source for code; the bundle preserves large and
+historical artifacts that are intentionally excluded from this repository.
+
 Machine-readable corpus facts and hashes are in
 [`corpora.yaml`](corpora.yaml). The paths in that file are logical identifiers
 to be resolved below a local corpus root; they are not ML Space paths.
@@ -205,6 +217,18 @@ Torch 2 implementation families, but the exact repository revision for each
 historical run cannot be recovered from any retained artifact.
 
 ## Watkins scores in checkpoint names
+
+### Canonical validation resource budget
+
+Thirty-three completed legacy Watkins validations on an A100 took 401.7 to
+504.9 seconds each. A later uncontended series for updates 123k-128k took
+362.9 to 379.4 seconds, while the 129k watcher took 566.7 seconds alongside
+training. Those runs extracted 17 representations for 1,697 examples. The
+canonical split has 1,656 examples, retains the 17 validation probes and one
+final refit, and removes the legacy clustering diagnostics. A defensible
+single-checkpoint budget is therefore 6-10 minutes of A100 compute, with 12
+minutes reserved for normal execution and a 20-minute hard stop
+(0.333 A100-hours) covering startup and artifact hashing.
 
 The legacy 0.89-0.91 values are exploratory, **not publication-canonical**.
 The naming harness used the fixed BEANS Watkins train/test split (1,357 train,
