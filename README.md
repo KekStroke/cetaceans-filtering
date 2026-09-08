@@ -70,6 +70,8 @@ publication validation contract are recorded in
 [`docs/animal2vec_reproducibility/README.md`](docs/animal2vec_reproducibility/README.md)
 and
 [`docs/marine_mammal_ssl/validation/README.md`](docs/marine_mammal_ssl/validation/README.md).
+The reproducibility record also links the public bundle of retained manifests,
+logs, TensorBoard events, validation reports, and selected checkpoints.
 
 Default 16 kHz / 5 second pretraining recipe:
 
