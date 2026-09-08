@@ -18,6 +18,12 @@ class ProtocolError(ValueError):
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_PARTITION_ROW_ID_RE = re.compile(r"^(train|test):(0|[1-9][0-9]*)$")
+_EXCLUSION_REASONS = {
+    "matches_test_audio_sha256",
+    "within_train_conflicting_labels",
+    "within_train_duplicate_same_label",
+}
 _T = TypeVar("_T")
 
 
@@ -44,16 +50,38 @@ def _portable_identifier(value: str, field: str) -> str:
     return value
 
 
+def _partition_row_identifier(value: Any, role: str) -> str:
+    """Validate an artifact-pinned, partition-qualified row identifier."""
+
+    if not isinstance(value, str):
+        raise ProtocolError(f"splits.{role} IDs must be strings")
+    match = _PARTITION_ROW_ID_RE.fullmatch(value)
+    if match is None:
+        raise ProtocolError(
+            f"splits.{role} contains invalid partition-row ID {value!r}; "
+            "expected train:<row> or test:<row> with a canonical nonnegative integer"
+        )
+    expected_partition = "test" if role == "test" else "train"
+    if match.group(1) != expected_partition:
+        raise ProtocolError(
+            f"splits.{role} ID {value!r} must use the "
+            f"{expected_partition!r} source partition"
+        )
+    return value
+
+
 @dataclasses.dataclass(frozen=True)
 class SplitManifest:
     schema_version: int
     protocol_id: str
     dataset_name: str
     dataset_revision: str
-    record_id_field: str
+    record_id_scheme: str
     artifacts: Mapping[str, str]
     source_partitions: Mapping[str, str]
     splits: Mapping[str, tuple[str, ...]]
+    validation_split_audit: Mapping[str, Any]
+    exclusions: Mapping[str, Mapping[str, str]]
     seed: int
     classifier: Mapping[str, Any]
 
@@ -76,7 +104,7 @@ class SplitManifest:
             )
         return {
             role: [records[record_id] for record_id in self.splits[role]]
-            for role in ("train", "validation", "test")
+            for role in ("train", "validation", "test", "excluded")
         }
 
     def verify_artifacts(self, data_dir: os.PathLike[str] | str) -> None:
@@ -122,7 +150,7 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
     root = _require_mapping(raw, "manifest")
     _require_exact_keys(
         root,
-        {"schema_version", "protocol_id", "dataset", "splits", "protocol"},
+        {"schema_version", "protocol_id", "dataset", "splits", "audit", "protocol"},
         "manifest",
     )
     if root.get("schema_version") != 1:
@@ -136,7 +164,7 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
         {
             "name",
             "revision",
-            "record_id_field",
+            "record_id_scheme",
             "artifacts",
             "source_partitions",
         },
@@ -148,9 +176,11 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
     revision = _portable_identifier(
         str(dataset.get("revision", "")), "dataset.revision"
     )
-    record_id_field = _portable_identifier(
-        str(dataset.get("record_id_field", "")), "dataset.record_id_field"
-    )
+    record_id_scheme = dataset.get("record_id_scheme")
+    if record_id_scheme != "partition_row_index_v1":
+        raise ProtocolError(
+            "dataset.record_id_scheme must be 'partition_row_index_v1'"
+        )
 
     artifacts_raw = _require_mapping(dataset.get("artifacts"), "dataset.artifacts")
     if not artifacts_raw:
@@ -188,22 +218,24 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
         )
 
     split_raw = _require_mapping(root.get("splits"), "splits")
-    if set(split_raw) != {"train", "validation", "test"}:
+    split_roles = ("train", "validation", "test", "excluded")
+    if set(split_raw) != set(split_roles):
         raise ProtocolError(
-            "splits must contain exactly train, validation, and test"
+            "splits must contain exactly train, validation, test, and excluded"
         )
     splits: dict[str, tuple[str, ...]] = {}
     seen: dict[str, str] = {}
-    for role in ("train", "validation", "test"):
+    for role in split_roles:
         values = split_raw[role]
         if (
             not isinstance(values, Sequence)
             or isinstance(values, (str, bytes))
-            or not values
+            or (role != "excluded" and not values)
         ):
-            raise ProtocolError(f"splits.{role} must be a non-empty array")
+            qualifier = "an array" if role == "excluded" else "a non-empty array"
+            raise ProtocolError(f"splits.{role} must be {qualifier}")
         identifiers = tuple(
-            _portable_identifier(str(value), f"splits.{role}") for value in values
+            _partition_row_identifier(value, role) for value in values
         )
         if len(set(identifiers)) != len(identifiers):
             raise ProtocolError(f"splits.{role} contains duplicate IDs")
@@ -214,6 +246,61 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
                 )
             seen[record_id] = role
         splits[role] = identifiers
+
+    audit = _require_mapping(root.get("audit"), "audit")
+    _require_exact_keys(
+        audit, {"validation_split", "exclusions"}, "audit"
+    )
+    validation_split = _require_mapping(
+        audit.get("validation_split"), "audit.validation_split"
+    )
+    expected_validation_split = {
+        "method": "per_class_audio_sha256_rank_v1",
+        "target_fraction": 0.2,
+        "seed_material": "watkins-validation-v1",
+        "rank_payload": "seed_material|label|audio_sha256|row_index",
+        "allocation": "max(1,min(n-1,(n+2)//5))",
+    }
+    _require_exact_keys(
+        validation_split,
+        set(expected_validation_split),
+        "audit.validation_split",
+    )
+    for key, expected in expected_validation_split.items():
+        if validation_split.get(key) != expected:
+            raise ProtocolError(
+                f"audit.validation_split.{key} must be {expected!r}"
+            )
+
+    exclusions_raw = _require_mapping(audit.get("exclusions"), "audit.exclusions")
+    if set(exclusions_raw) != set(splits["excluded"]):
+        raise ProtocolError(
+            "audit.exclusions keys must exactly match splits.excluded"
+        )
+    exclusions: dict[str, dict[str, str]] = {}
+    for record_id, raw_detail in exclusions_raw.items():
+        detail = _require_mapping(raw_detail, f"audit.exclusions.{record_id}")
+        _require_exact_keys(
+            detail,
+            {"reason", "audio_sha256"},
+            f"audit.exclusions.{record_id}",
+        )
+        reason = detail.get("reason")
+        if reason not in _EXCLUSION_REASONS:
+            raise ProtocolError(
+                f"audit.exclusions.{record_id}.reason is not recognized"
+            )
+        audio_sha256 = detail.get("audio_sha256")
+        if not isinstance(audio_sha256, str) or not _SHA256_RE.fullmatch(
+            audio_sha256
+        ):
+            raise ProtocolError(
+                f"audit.exclusions.{record_id}.audio_sha256 is invalid"
+            )
+        exclusions[str(record_id)] = {
+            "reason": str(reason),
+            "audio_sha256": audio_sha256,
+        }
 
     protocol = _require_mapping(root.get("protocol"), "protocol")
     _require_exact_keys(
@@ -269,10 +356,12 @@ def load_split_manifest(path: os.PathLike[str] | str) -> SplitManifest:
         protocol_id=protocol_id,
         dataset_name=dataset_name,
         dataset_revision=revision,
-        record_id_field=record_id_field,
+        record_id_scheme=record_id_scheme,
         artifacts=artifacts,
         source_partitions=source_partitions,
         splits=splits,
+        validation_split_audit=dict(validation_split),
+        exclusions=exclusions,
         seed=seed,
         classifier=dict(classifier),
     )

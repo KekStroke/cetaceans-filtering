@@ -4,18 +4,18 @@
   "title": "animal2vec canonical validation split manifest v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "protocol_id", "dataset", "splits", "protocol"],
+  "required": ["schema_version", "protocol_id", "dataset", "splits", "audit", "protocol"],
   "properties": {
     "schema_version": {"const": 1},
     "protocol_id": {"type": "string", "minLength": 1},
     "dataset": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "revision", "record_id_field", "artifacts", "source_partitions"],
+      "required": ["name", "revision", "record_id_scheme", "artifacts", "source_partitions"],
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "revision": {"type": "string", "minLength": 1},
-        "record_id_field": {"type": "string", "minLength": 1},
+        "record_id_scheme": {"const": "partition_row_index_v1"},
         "artifacts": {
           "type": "object",
           "minProperties": 1,
@@ -38,11 +38,55 @@
     "splits": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["train", "validation", "test"],
+      "required": ["train", "validation", "test", "excluded"],
       "properties": {
-        "train": {"$ref": "#/$defs/record_ids"},
-        "validation": {"$ref": "#/$defs/record_ids"},
-        "test": {"$ref": "#/$defs/record_ids"}
+        "train": {"$ref": "#/$defs/train_record_ids"},
+        "validation": {"$ref": "#/$defs/train_record_ids"},
+        "test": {"$ref": "#/$defs/test_record_ids"},
+        "excluded": {"$ref": "#/$defs/excluded_record_ids"}
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validation_split", "exclusions"],
+      "properties": {
+        "validation_split": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "target_fraction", "seed_material", "rank_payload", "allocation"],
+          "properties": {
+            "method": {"const": "per_class_audio_sha256_rank_v1"},
+            "target_fraction": {"const": 0.2},
+            "seed_material": {"const": "watkins-validation-v1"},
+            "rank_payload": {"const": "seed_material|label|audio_sha256|row_index"},
+            "allocation": {"const": "max(1,min(n-1,(n+2)//5))"}
+          }
+        },
+        "exclusions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^train:(0|[1-9][0-9]*)$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reason", "audio_sha256"],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "matches_test_audio_sha256",
+                  "within_train_conflicting_labels",
+                  "within_train_duplicate_same_label"
+                ]
+              },
+              "audio_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
       }
     },
     "protocol": {
@@ -71,11 +115,22 @@
     }
   },
   "$defs": {
-    "record_ids": {
+    "train_record_ids": {
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1}
+      "items": {"type": "string", "pattern": "^train:(0|[1-9][0-9]*)$"}
+    },
+    "test_record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^test:(0|[1-9][0-9]*)$"}
+    },
+    "excluded_record_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^train:(0|[1-9][0-9]*)$"}
     }
   }
 }

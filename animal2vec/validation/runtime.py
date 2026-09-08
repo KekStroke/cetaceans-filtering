@@ -132,10 +132,15 @@ def input_spec_from_config(cfg: Any) -> InputSpec:
         ),
         "max_sample_size",
     )
+    normalize = _nested_get(cfg, ("task", "normalize"))
+    if not isinstance(normalize, bool):
+        raise ConfigError(
+            "checkpoint config task.normalize must be an explicit boolean"
+        )
     return InputSpec(
         sample_rate=sample_rate,
         max_sample_size=max_sample_size,
-        normalize=bool(_nested_get(cfg, ("task", "normalize"))),
+        normalize=normalize,
         sample_rate_key=sample_rate_key,
         max_sample_size_key=max_sample_size_key,
     )

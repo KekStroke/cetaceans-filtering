@@ -25,6 +25,11 @@ from animal2vec.validation.runtime import (
     extract_features,
     input_spec_from_config,
 )
+from animal2vec.validation.watkins import (
+    _evaluation_class_indices,
+    _index_dataset,
+    _semantic_class_names,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,7 +64,7 @@ def _manifest_payload(train_hash: str, test_hash: str) -> dict:
         "dataset": {
             "name": "beans-watkins",
             "revision": "audited-revision",
-            "record_id_field": "path.path",
+            "record_id_scheme": "partition_row_index_v1",
             "artifacts": {
                 "train.arrow": train_hash,
                 "test.arrow": test_hash,
@@ -70,9 +75,20 @@ def _manifest_payload(train_hash: str, test_hash: str) -> dict:
             },
         },
         "splits": {
-            "train": ["train-a.wav"],
-            "validation": ["validation-a.wav"],
-            "test": ["test-a.wav"],
+            "train": ["train:0"],
+            "validation": ["train:1"],
+            "test": ["test:0"],
+            "excluded": [],
+        },
+        "audit": {
+            "validation_split": {
+                "method": "per_class_audio_sha256_rank_v1",
+                "target_fraction": 0.2,
+                "seed_material": "watkins-validation-v1",
+                "rank_payload": "seed_material|label|audio_sha256|row_index",
+                "allocation": "max(1,min(n-1,(n+2)//5))",
+            },
+            "exclusions": {},
         },
         "protocol": {
             "mask": False,
@@ -119,6 +135,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertAlmostEqual(spec.window_seconds, 80000 / sample_rate)
         nested = input_spec_from_config(
             {
+                "task": {"normalize": False},
                 "model": {
                     "modalities": {
                         "audio": {
@@ -130,6 +147,7 @@ class RuntimeTests(unittest.TestCase):
             }
         )
         self.assertEqual(nested.sample_rate, 32000)
+        self.assertFalse(nested.normalize)
 
     def test_input_spec_rejects_missing_or_conflicting_rate(self):
         with self.assertRaises(ConfigError):
@@ -140,6 +158,10 @@ class RuntimeTests(unittest.TestCase):
                     "task": {"sample_rate": 8000, "max_sample_size": 80000},
                     "model": {"sample_rate": 16000},
                 }
+            )
+        with self.assertRaises(ConfigError):
+            input_spec_from_config(
+                {"task": {"sample_rate": 16000, "max_sample_size": 80000}}
             )
 
 
@@ -164,28 +186,91 @@ class ProtocolTests(unittest.TestCase):
             manifest.verify_artifacts(root)
             partition = manifest.partition(
                 {
-                    "train-a.wav": 1,
-                    "validation-a.wav": 2,
-                    "test-a.wav": 3,
+                    "train:0": 1,
+                    "train:1": 2,
+                    "test:0": 3,
                 }
             )
-            self.assertEqual(partition, {"train": [1], "validation": [2], "test": [3]})
+            self.assertEqual(
+                partition,
+                {"train": [1], "validation": [2], "test": [3], "excluded": []},
+            )
             with self.assertRaises(ProtocolError):
-                manifest.partition({"train-a.wav": 1, "test-a.wav": 3})
+                manifest.partition({"train:0": 1, "test:0": 3})
 
-    def test_manifest_rejects_overlap_and_absolute_ids(self):
+    def test_manifest_rejects_overlap_and_noncanonical_row_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             train, test, path = self._write_fixture(root)
             payload = _manifest_payload(sha256_file(train), sha256_file(test))
-            payload["splits"]["test"] = ["train-a.wav"]
+            payload["splits"]["test"] = ["train:0"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(ProtocolError):
                 load_split_manifest(path)
-            payload["splits"]["test"] = ["C:\\private\\test.wav"]
+            payload["splits"]["test"] = ["test:01"]
             path.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaises(ProtocolError):
                 load_split_manifest(path)
+
+    def test_manifest_rejects_malformed_and_wrong_partition_row_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            train, test, path = self._write_fixture(root)
+            for role, bad_id in (
+                ("train", "train:-1"),
+                ("train", "train:00"),
+                ("validation", "test:1"),
+                ("test", "train:2"),
+                ("test", "other:0"),
+                ("excluded", "test:2"),
+            ):
+                with self.subTest(role=role, bad_id=bad_id):
+                    payload = _manifest_payload(sha256_file(train), sha256_file(test))
+                    payload["splits"][role] = [bad_id]
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaises(ProtocolError):
+                        load_split_manifest(path)
+
+    def test_excluded_ids_require_matching_reason_and_audio_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            train, test, path = self._write_fixture(root)
+            payload = _manifest_payload(sha256_file(train), sha256_file(test))
+            payload["splits"]["excluded"] = ["train:2"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ProtocolError):
+                load_split_manifest(path)
+
+            payload["audit"]["exclusions"]["train:2"] = {
+                "reason": "matches_test_audio_sha256",
+                "audio_sha256": "b" * 64,
+            }
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            manifest = load_split_manifest(path)
+            self.assertEqual(
+                manifest.exclusions["train:2"]["reason"],
+                "matches_test_audio_sha256",
+            )
+
+            payload["audit"]["exclusions"]["train:2"]["reason"] = "unspecified"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ProtocolError):
+                load_split_manifest(path)
+
+    def test_partition_row_ids_ignore_duplicate_and_cross_partition_basenames(self):
+        duplicate_name = {"path": {"path": "same.wav"}, "label": 0}
+        train = _index_dataset([duplicate_name, duplicate_name], "train")
+        test = _index_dataset([duplicate_name], "test")
+        self.assertEqual(list(train), ["train:0", "train:1"])
+        self.assertEqual(list(test), ["test:0"])
+        self.assertFalse(set(train) & set(test))
+
+    def test_macro_f1_class_list_comes_only_from_evaluation_labels(self):
+        self.assertEqual(_evaluation_class_indices([0, 2, 2, 0]), [0, 2])
+        self.assertEqual(
+            _semantic_class_names([0, 2], ["orca", "seal", "dolphin"]),
+            ["orca", "dolphin"],
+        )
 
     def test_manifest_rejects_noncanonical_protocol(self):
         with tempfile.TemporaryDirectory() as tmp:

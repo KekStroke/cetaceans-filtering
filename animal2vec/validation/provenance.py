@@ -120,14 +120,24 @@ def build_provenance(
         "dataset": {
             "name": split_manifest.dataset_name,
             "revision": split_manifest.dataset_revision,
-            "record_id_field": split_manifest.record_id_field,
+            "record_id_scheme": split_manifest.record_id_scheme,
             "artifacts": dict(sorted(split_manifest.artifacts.items())),
             "source_partitions": dict(split_manifest.source_partitions),
+            "validation_split_audit": dict(split_manifest.validation_split_audit),
             "split_manifest_file": manifest.name,
             "split_manifest_sha256": sha256_file(manifest),
             "split_counts": {
                 role: len(values)
                 for role, values in split_manifest.splits.items()
+            },
+            "exclusion_counts_by_reason": {
+                reason: sum(
+                    detail["reason"] == reason
+                    for detail in split_manifest.exclusions.values()
+                )
+                for reason in sorted(
+                    {detail["reason"] for detail in split_manifest.exclusions.values()}
+                )
             },
         },
         "environment": {**environment_versions(), "device": device},

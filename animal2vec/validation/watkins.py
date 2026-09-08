@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 import math
-from pathlib import Path, PurePath
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .protocol import (
@@ -34,46 +34,20 @@ def _resolve_device(requested: str) -> str:
     return requested
 
 
-def _nested_value(record: Mapping[str, Any], dotted_field: str) -> Any:
-    current: Any = record
-    for part in dotted_field.split("."):
-        if not isinstance(current, Mapping) or part not in current:
-            raise ProtocolError(
-                f"record is missing manifest ID field {dotted_field!r}"
-            )
-        current = current[part]
-    return current
-
-
-def _record_id(record: Mapping[str, Any], dotted_field: str) -> str:
-    value = _nested_value(record, dotted_field)
-    if not isinstance(value, (str, Path)):
-        raise ProtocolError(
-            f"record ID field {dotted_field!r} must contain a path or string"
-        )
-    # HuggingFace audio cache roots are machine-specific; the published logical ID
-    # is the stable source filename. Duplicate basenames are rejected below.
-    record_id = PurePath(str(value).replace(chr(92), "/")).name.strip()
-    if not record_id:
-        raise ProtocolError(f"empty record ID from field {dotted_field!r}")
-    return record_id
-
-
-def _index_dataset(dataset: Any, manifest: SplitManifest) -> dict[str, Mapping[str, Any]]:
-    indexed: dict[str, Mapping[str, Any]] = {}
-    for row in dataset:
-        record_id = _record_id(row, manifest.record_id_field)
-        if record_id in indexed:
-            raise ProtocolError(
-                f"dataset contains duplicate logical record ID {record_id!r}"
-            )
-        indexed[record_id] = row
-    return indexed
+def _index_dataset(
+    dataset: Any, source_partition: str
+) -> dict[str, tuple[Any, int]]:
+    if source_partition not in {"train", "test"}:
+        raise ProtocolError(f"unknown source partition {source_partition!r}")
+    return {
+        f"{source_partition}:{row_index}": (dataset, row_index)
+        for row_index in range(len(dataset))
+    }
 
 
 def _load_fixed_records(
     data_dir: Path, manifest: SplitManifest
-) -> dict[str, list[Mapping[str, Any]]]:
+) -> tuple[dict[str, list[Mapping[str, Any]]], list[str]]:
     from datasets import Dataset
 
     manifest.verify_artifacts(data_dir)
@@ -83,25 +57,35 @@ def _load_fixed_records(
     test_dataset = Dataset.from_file(
         str(data_dir / manifest.source_partitions["test"])
     )
-    train_index = _index_dataset(train_dataset, manifest)
-    test_index = _index_dataset(test_dataset, manifest)
+    train_label_names = list(getattr(train_dataset.features["label"], "names", []))
+    test_label_names = list(getattr(test_dataset.features["label"], "names", []))
+    if not train_label_names or train_label_names != test_label_names:
+        raise ProtocolError(
+            "source train/test artifacts must share one non-empty ClassLabel mapping"
+        )
+    train_index = _index_dataset(train_dataset, "train")
+    test_index = _index_dataset(test_dataset, "test")
 
     expected_training = set(manifest.splits["train"]) | set(
         manifest.splits["validation"]
-    )
+    ) | set(manifest.splits["excluded"])
     expected_test = set(manifest.splits["test"])
     if set(train_index) != expected_training:
         raise ProtocolError(
-            "source train artifact does not exactly match manifest train+validation IDs"
+            "source train artifact does not exactly match manifest "
+            "train+validation+excluded IDs"
         )
     if set(test_index) != expected_test:
         raise ProtocolError(
             "source test artifact does not exactly match manifest test IDs"
         )
-    if set(train_index) & set(test_index):
-        raise ProtocolError("source train and test artifacts overlap by record ID")
     combined = {**train_index, **test_index}
-    return manifest.partition(combined)
+    partitioned = manifest.partition(combined)
+    records = {
+        role: [dataset[row_index] for dataset, row_index in partitioned[role]]
+        for role in ("train", "validation", "test")
+    }
+    return records, train_label_names
 
 
 def _prepare_audio(
@@ -215,6 +199,24 @@ def _classifier(manifest: SplitManifest) -> Any:
     )
 
 
+def _evaluation_class_indices(y_eval: Sequence[Any]) -> list[int]:
+    return sorted({int(value) for value in y_eval})
+
+
+def _semantic_class_names(
+    encoded_values: Sequence[Any], dataset_label_names: Sequence[str]
+) -> list[str]:
+    names: list[str] = []
+    for value in encoded_values:
+        index = int(value)
+        if index < 0 or index >= len(dataset_label_names):
+            raise ProtocolError(
+                f"label ID {value!r} is outside the dataset ClassLabel mapping"
+            )
+        names.append(str(dataset_label_names[index]))
+    return names
+
+
 def _fit_and_score(
     x_train: Any,
     y_train: Any,
@@ -231,10 +233,11 @@ def _fit_and_score(
     model = make_pipeline(StandardScaler(), _classifier(manifest))
     model.fit(x_train, y_train)
     predicted = model.predict(x_eval)
-    labels = np.arange(len(classes))
+    labels = np.asarray(_evaluation_class_indices(y_eval), dtype=np.int64)
     per_class = f1_score(
         y_eval, predicted, labels=labels, average=None, zero_division=0
     )
+    evaluated_classes = [str(classes[int(index)]) for index in labels]
     return {
         "macro_f1": float(
             f1_score(
@@ -246,13 +249,16 @@ def _fit_and_score(
             )
         ),
         "accuracy": float(accuracy_score(y_eval, predicted)),
+        "evaluated_classes": evaluated_classes,
         "per_class_f1": {
-            str(classes[index]): float(per_class[index])
-            for index in range(len(classes))
+            str(classes[int(class_index)]): float(per_class[position])
+            for position, class_index in enumerate(labels)
         },
         "per_class_support": {
-            str(classes[index]): int((y_eval == index).sum())
-            for index in range(len(classes))
+            str(classes[int(class_index)]): int(
+                (np.asarray(y_eval) == class_index).sum()
+            )
+            for class_index in labels
         },
     }
 
@@ -263,7 +269,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     manifest = load_split_manifest(args.split_manifest)
     seed_everything(manifest.seed)
-    records = _load_fixed_records(args.data_dir, manifest)
+    records, dataset_label_names = _load_fixed_records(args.data_dir, manifest)
     device = _resolve_device(args.device)
     encoder = load_encoder(args.checkpoint, device, seed=manifest.seed)
 
@@ -272,7 +278,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         encoder, records["validation"], device
     )
     label_encoder = LabelEncoder().fit(train_labels)
-    classes = [str(value) for value in label_encoder.classes_]
+    classes = _semantic_class_names(
+        label_encoder.classes_, dataset_label_names
+    )
     try:
         y_train = label_encoder.transform(train_labels)
         y_validation = label_encoder.transform(validation_labels)
