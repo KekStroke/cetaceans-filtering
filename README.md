@@ -65,6 +65,12 @@ paths. Full setup and launch docs:
 animal2vec/README.md
 ```
 
+Audited corpus sizes, source composition, historical run lineage, and the
+publication validation contract are recorded in
+[`docs/animal2vec_reproducibility/README.md`](docs/animal2vec_reproducibility/README.md)
+and
+[`docs/marine_mammal_ssl/validation/README.md`](docs/marine_mammal_ssl/validation/README.md).
+
 Default 16 kHz / 5 second pretraining recipe:
 
 ```bash

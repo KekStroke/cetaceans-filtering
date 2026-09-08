@@ -163,7 +163,11 @@ unsaved tails.
   `lr=1e-4`; this is continued cosine scheduling, not a fresh warmup.
 - EMA annealing ends at update 300,000, beyond both the original 120,000 and
   continuation 200,000 limits. It never reached its configured endpoint in
-  these runs.
+  these runs. The retained configs and logs contain no rationale, so whether
+  that mismatch was intentional cannot be established.
+- The one-epoch limit ended the initial 16 kHz process and three productive
+  jobs subsequently continued it. The retained evidence does not say whether
+  that continuation was already planned when the initial job was launched.
 
 ### Throughput interpretation
 
@@ -175,12 +179,18 @@ clips per optimizer update, `clone_batch=3`, and `update_freq=10`. The 16 kHz
 run represents half as many seconds of sound per update, but essentially the
 same number of input samples seen by the model.
 
+The resolved Hydra configs for the retained 8 kHz bf16 continuations and the
+initial 16 kHz job agree on those batching values, and no JSON or restart log
+records a mid-run change. The original blue checkpoint directory has been
+deleted, so its unavailable segment cannot be checked more strongly than the
+surviving resume/config evidence allows.
+
 The retained runs differ in code and runtime (Torch 1.13 versus the Torch 2
-port), optimizer wrapper (composite versus Adam), data layout/I/O, and enabled
-A100 compatibility speedups. The logs do not contain a controlled timing
-ablation that separates these effects. The only defensible budget is therefore
-a short paired benchmark using identical 32 kHz-parent rows, sample counts,
-batching, code, and hardware.
+port), optimizer wrapper (composite versus Adam), data layout/I/O, and A100
+compatibility changes mentioned by the continuation logs. The logs do not
+contain a controlled timing ablation that separates these effects. The only
+defensible budget is therefore a short paired benchmark using identical 32
+kHz-parent rows, sample counts, batching, code, and hardware.
 
 All retained multi-GPU bf16 runs identify two NVIDIA A100-SXM4-80GB devices;
 the first fp16 experiment used one A100-SXM4-80GB. The JSON logs also disprove
@@ -188,6 +198,11 @@ the blanket claim that clipping was 100% for every run: clipped-record counts
 were 200/200 for resume7,500, 199/318 for lr 4e-5, 829/2,436 for
 resume13,581, and 581/597 for the initial 16 kHz run. Gradient clipping is a
 material confound, but it was not constant across all comparisons.
+
+The saved Hydra configs and training logs do not embed a Git commit, branch, or
+complete package-version fingerprint. They establish the Torch 1.13 versus
+Torch 2 implementation families, but the exact repository revision for each
+historical run cannot be recovered from any retained artifact.
 
 ## Watkins scores in checkpoint names
 
@@ -205,3 +220,12 @@ paper, fix the final layer in advance or select a layer only on a validation
 partition inside the training data, then evaluate the held-out test set once.
 The recovered reports explain the approximately 0.90 variant; they do not
 identify the reported 0.54 or 0.70 variants.
+
+An additional content audit found nine exact audio hashes shared by the legacy
+official train and test artifacts, all with conflicting labels, plus 16
+conflicting duplicate-content pairs inside train. The publication protocol in
+[`configs/animal2vec_validation/watkins-split-v1.json`](../../configs/animal2vec_validation/watkins-split-v1.json)
+keeps all 340 official test rows untouched, excludes the contaminated 41 train
+rows, and fixes 1,051 train plus 265 validation rows before any checkpoint is
+scored. The canonical harness is documented in
+[`docs/marine_mammal_ssl/validation/README.md`](../marine_mammal_ssl/validation/README.md).
