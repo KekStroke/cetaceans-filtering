@@ -1,0 +1,37 @@
+name: Validation contract
+
+on:
+  pull_request:
+    paths:
+      - "animal2vec/validation/**"
+      - "animal2vec/tests/test_validation_protocol.py"
+      - "configs/animal2vec_validation/**"
+      - "docs/marine_mammal_ssl/validation/**"
+      - ".github/workflows/validation.yml"
+  push:
+    branches: [main]
+    paths:
+      - "animal2vec/validation/**"
+      - "animal2vec/tests/test_validation_protocol.py"
+      - "configs/animal2vec_validation/**"
+      - "docs/marine_mammal_ssl/validation/**"
+      - ".github/workflows/validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Run dependency-free validation contract tests
+        run: python -m unittest animal2vec.tests.test_validation_protocol
+      - name: Check the canonical CLI
+        run: |
+          python -m animal2vec.validation --help
+          python -m animal2vec.validation watkins --help
+          python -m animal2vec.validation check-manifest --help

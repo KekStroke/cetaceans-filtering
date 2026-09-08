@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KekStroke/cetaceans-filtering/schemas/animal2vec-validation-split-v1.json",
+  "title": "animal2vec canonical validation split manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "protocol_id", "dataset", "splits", "audit", "protocol"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "protocol_id": {"type": "string", "minLength": 1},
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "revision", "record_id_scheme", "artifacts", "source_partitions"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "record_id_scheme": {"const": "partition_row_index_v1"},
+        "artifacts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "source_partitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["train", "test"],
+          "properties": {
+            "train": {"type": "string", "minLength": 1},
+            "test": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "splits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["train", "validation", "test", "excluded"],
+      "properties": {
+        "train": {"$ref": "#/$defs/train_record_ids"},
+        "validation": {"$ref": "#/$defs/train_record_ids"},
+        "test": {"$ref": "#/$defs/test_record_ids"},
+        "excluded": {"$ref": "#/$defs/excluded_record_ids"}
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["validation_split", "exclusions"],
+      "properties": {
+        "validation_split": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "target_fraction", "seed_material", "rank_payload", "allocation"],
+          "properties": {
+            "method": {"const": "per_class_audio_sha256_rank_v1"},
+            "target_fraction": {"const": 0.2},
+            "seed_material": {"const": "watkins-validation-v1"},
+            "rank_payload": {"const": "seed_material|label|audio_sha256|row_index"},
+            "allocation": {"const": "max(1,min(n-1,(n+2)//5))"}
+          }
+        },
+        "exclusions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^train:(0|[1-9][0-9]*)$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["reason", "audio_sha256"],
+            "properties": {
+              "reason": {
+                "enum": [
+                  "matches_test_audio_sha256",
+                  "within_train_conflicting_labels",
+                  "within_train_duplicate_same_label"
+                ]
+              },
+              "audio_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mask", "pooling", "layer_selection", "selection_metric", "seed", "classifier"],
+      "properties": {
+        "mask": {"const": false},
+        "pooling": {"const": "mean"},
+        "layer_selection": {"const": "validation"},
+        "selection_metric": {"const": "macro_f1"},
+        "seed": {"type": "integer"},
+        "classifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "C", "class_weight", "max_iter", "solver"],
+          "properties": {
+            "name": {"const": "logistic_regression"},
+            "C": {"type": "number", "exclusiveMinimum": 0},
+            "class_weight": {"enum": ["balanced", null]},
+            "max_iter": {"type": "integer", "minimum": 1},
+            "solver": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "train_record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^train:(0|[1-9][0-9]*)$"}
+    },
+    "test_record_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^test:(0|[1-9][0-9]*)$"}
+    },
+    "excluded_record_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^train:(0|[1-9][0-9]*)$"}
+    }
+  }
+}

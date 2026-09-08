@@ -1,10 +1,16 @@
 [project]
 name = "cetaceans-filtering"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reproducible pipelines for cetacean audio filtering and representation learning"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  'joblib>=1.5.3',
+  'numpy>=2.4.4',
+  'pandas>=2.3.3',
+  'pyyaml>=6.0.3',
+  'requests>=2.33.1',
+  'tqdm>=4.67.3',
   "beautifulsoup4>=4.14.3",
   "boto3>=1.40.52",
   "datasets[audio]>=4.8.4",

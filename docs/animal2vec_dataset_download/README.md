@@ -2,6 +2,10 @@
 
 Short workflow for downloading cetacean audio and preparing an animal2vec pretraining manifest.
 
+The exact retained corpus inventories, raw manifest hashes, 32 kHz provenance,
+and sample-rate-ablation caveat are recorded in the
+[animal2vec reproducibility record](../animal2vec_reproducibility/README.md).
+
 ## Inputs
 
 Use the source downloaders in `utils/datasets_downloads/`:

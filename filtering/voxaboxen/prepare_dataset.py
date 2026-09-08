@@ -1,4 +1,4 @@
-﻿"""Prepare Label Studio audio annotations for Voxaboxen.
+"""Prepare Label Studio audio annotations for Voxaboxen.
 
 This script writes Raven-style selection tables plus train/val/test info CSVs.
 It does not copy audio; generated CSVs point to the original audio files.

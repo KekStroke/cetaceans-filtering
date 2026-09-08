@@ -2,6 +2,8 @@
 
 Cetacean audio filtering and classification built on [Perch](https://github.com/google-research/perch-hoplite) embeddings.
 
+[License](LICENSE) | [Citation](CITATION.cff) | [Data sources](DATA_SOURCES.md) | [Third-party notices](THIRD_PARTY_NOTICES.md)
+
 ## Setup
 
 ```powershell
@@ -62,6 +64,12 @@ paths. Full setup and launch docs:
 ```text
 animal2vec/README.md
 ```
+
+Audited corpus sizes, source composition, historical run lineage, and the
+publication validation contract are recorded in
+[`docs/animal2vec_reproducibility/README.md`](docs/animal2vec_reproducibility/README.md)
+and
+[`docs/marine_mammal_ssl/validation/README.md`](docs/marine_mammal_ssl/validation/README.md).
 
 Default 16 kHz / 5 second pretraining recipe:
 
