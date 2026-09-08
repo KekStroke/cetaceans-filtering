@@ -1,4 +1,4 @@
-﻿"""Run Voxaboxen inference from this repository."""
+"""Run Voxaboxen inference from this repository."""
 
 from __future__ import annotations
 

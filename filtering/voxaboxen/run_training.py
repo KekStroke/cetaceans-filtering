@@ -1,4 +1,4 @@
-﻿"""Run Voxaboxen training from this repository without vendoring Voxaboxen."""
+"""Run Voxaboxen training from this repository without vendoring Voxaboxen."""
 
 from __future__ import annotations
 

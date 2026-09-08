@@ -1,1 +1,1 @@
-﻿"""Helpers for running Voxaboxen as an external tool."""
+"""Helpers for running Voxaboxen as an external tool."""

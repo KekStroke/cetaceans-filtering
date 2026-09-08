@@ -41,7 +41,7 @@ def main(config: DictConfig):
     dsets = [load_dataset(hf_name, split=s) for s in splits]
     ds_all = dsets[0] if len(dsets) == 1 else concatenate_datasets(dsets)
 
-    # IMPORTANT: no torchcodec; we’ll read bytes ourselves
+    # IMPORTANT: no torchcodec; we'll read bytes ourselves
     ds_all = ds_all.cast_column("audio", Audio(decode=False))
 
     pbar = tqdm(total=len(ds_all), desc="Processing WMMS")

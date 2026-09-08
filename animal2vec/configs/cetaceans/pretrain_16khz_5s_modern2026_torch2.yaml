@@ -181,7 +181,7 @@ model:
   #   RMSNorm (Llama-style) + RoPE (relative positions, now mask-correct) + SwiGLU FFN +
   #   QK-norm-style cosine attention + a cheap headwise gated-attention output.
   # This is a DESIGN preset to A/B against the base config at equal compute on the frozen-probe
-  # harness — not a proven win. RoPE replaces ALiBi here (use_alibi_encoder=false below) so the
+  # harness -- not a proven win. RoPE replaces ALiBi here (use_alibi_encoder=false below) so the
   # model has exactly one relative-position mechanism.
   norm_type: rmsnorm
   use_rope: true
