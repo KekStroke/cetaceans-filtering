@@ -218,8 +218,14 @@ That procedure selects the layer directly on the test set, so the number in a
 checkpoint filename is test-leaky (an oracle best-layer test score). For a
 paper, fix the final layer in advance or select a layer only on a validation
 partition inside the training data, then evaluate the held-out test set once.
-The recovered reports explain the approximately 0.90 variant; they do not
-identify the reported 0.54 or 0.70 variants.
+The recovered ML Space reports explain the approximately 0.90 variant. The
+prototype in [PR #10](https://github.com/KekStroke/cetaceans-filtering/pull/10)
+advertised approximately 0.70 at 8 kHz and 0.72 at 16 kHz from a different,
+also non-canonical harness: it used the official train/test artifacts, did not
+consistently force `mask=False`, selected the layer on test, and fit label
+encoding across train and test. That branch committed no matching result
+report. No retained report, script invocation, or config identifies the 0.54
+variant.
 
 An additional content audit found nine exact audio hashes shared by the legacy
 official train and test artifacts, all with conflicting labels, plus 16
